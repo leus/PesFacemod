@@ -26,14 +26,14 @@ class FaceFmdlManager(FmdlManagerBase):
     def __init__(self, base_path, tempfile_path):
         super().__init__(base_path, tempfile_path)
         self.model_type = "Face"
-        self.process_normals = True
+        # self.process_normals = False # True
 
 
 class HairFmdlManager(FmdlManagerBase):
     def __init__(self, base_path, tempfile_path):
         super().__init__(base_path, tempfile_path)
         self.model_type = "Hair"
-        self.process_normals = True
+        # self.process_normals = False # True
 
 
 class OralFmdlManager(FmdlManagerBase):
@@ -234,10 +234,12 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
         for texture in textures:
             if os.path.exists(texture + '.PNG'):  # texconv adds extension in uppercase
                 # convert from PNG to DDS
-                if exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'), '-bc3',
-                          texture + '.PNG', texture + '.dds'):
+                if exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'),
+                             '-bc3', texture + '.PNG', texture + '.dds'):
                     # convert to Ftex
                     exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), '-f', '0', texture + '.dds')
+            else:
+                print("Texture not found: ", texture)
 
         # and pack face file
         xml_file = PesFacemodGlobalData.face_fpk + '.xml'

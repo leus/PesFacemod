@@ -143,6 +143,7 @@ def get_uv_map(mesh_obj, map_name):
 def get_custom_vertex_normals(mesh_obj, map_name):
     data = mesh_obj.data
     cv_nrm_list = {}
+    data.calc_normals()
     if map_name == "":
         data.calc_tangents()
     else:
@@ -423,7 +424,7 @@ class FmdlManagerBase:
 
     def __init__(self, base_path, tempfile_path):
         self.model_type = None
-        self.process_normals = False
+        self.process_normals = True
         self.temp_path = ""
         self.img_search_path = ""
         self.export_offset = 0
@@ -1109,6 +1110,8 @@ class FmdlManagerBase:
             if "normal_map" in obj.data.uv_layers:
                 uv_nrml_list = get_uv_map(obj, "normal_map")
                 ex_submesh_nrm_uv_list.append(uv_nrml_list)
+            else:
+                ex_submesh_nrm_uv_list.append([])
 
             log("Custom normals?", obj.data.has_custom_normals)
             custom_nrm_list = get_custom_vertex_normals(obj, "UVMap")
@@ -1553,6 +1556,12 @@ class FmdlManagerBase:
                                       "rb")
         for sbm in range(ex_submesh_count):
             sub_mesh_format = self.vformat_per_submesh_list[sbm]
+            print("subm: [%d]" % sbm)
+            print("- len(ex_submesh_vert_color_list): %d" % (len(ex_submesh_vert_color_list)))
+            print("- len(ex_submesh_vert_color_list[sbm]): %d" % (len(ex_submesh_vert_color_list[sbm])))
+            # print("*******")
+            # print(ex_submesh_vert_color_list[sbm])
+            # print("*******")
             for vert in range(len(submesh_vertex_list[sbm])):
                 for ent in range(len(sub_mesh_format)):
                     current_usage = sub_mesh_format[ent]
@@ -1600,16 +1609,6 @@ class FmdlManagerBase:
                             export_file.write(pack("4H", hf_x, hf_z, hf_y, hf_w))
 
                     if current_usage == 3:  # color
-                        print("subm: [%d]" % (sbm))
-                        print("- vert: [%d]" % (vert))
-                        print("- len(ex_submesh_vert_color_list): %d" % (len(ex_submesh_vert_color_list)))
-
-                        # print("*******")
-                        # print(ex_submesh_vert_color_list[sbm])
-                        # print("*******")
-
-                        print("- len(ex_submesh_vert_color_list[sbm]): %d" % (len(ex_submesh_vert_color_list[sbm])))
-
                         ex_r = int(ex_submesh_vert_color_list[sbm][vert][0] * 255)
                         ex_g = int(ex_submesh_vert_color_list[sbm][vert][1] * 255)
                         ex_b = int(ex_submesh_vert_color_list[sbm][vert][2] * 255)
@@ -1654,15 +1653,17 @@ class FmdlManagerBase:
                         hf_v = float2halffloat((coord_v - 1) * -1)
                         export_file.write(pack("2H", hf_u, hf_v))
                     if current_usage == 9:  # UV2
-                        if "normal_map" in objlist[sbm].data.uv_layers:
-                            coord_u = ex_submesh_nrm_uv_list[sbm][vert][0]
-                            coord_v = ex_submesh_nrm_uv_list[sbm][vert][1]
-                            hf_u = float2halffloat(coord_u)
-                            hf_v = float2halffloat((coord_v - 1) * -1)
-                            export_file.write(pack("2H", hf_u, hf_v))
-                        else:
-                            log("Normal map UV apparently needed, but no normal map loaded")
-                            export_file.write(pack("2H"))
+                        if len(ex_submesh_nrm_uv_list) < sbm:
+                            print("not enough items in ex_submesh_nrm_uv_list: ", len(ex_submesh_nrm_uv_list))
+                            return False
+                        if len(ex_submesh_nrm_uv_list[sbm]) < vert:
+                            print("ex_submesh_nrm_uv_list[%s] has not enough vertices (%d)" % (sbm, len(ex_submesh_nrm_uv_list[sbm])))
+                            return False
+                        coord_u = ex_submesh_nrm_uv_list[sbm][vert][0]
+                        coord_v = ex_submesh_nrm_uv_list[sbm][vert][1]
+                        hf_u = float2halffloat(coord_u)
+                        hf_v = float2halffloat((coord_v - 1) * -1)
+                        export_file.write(pack("2H", hf_u, hf_v))
                     if current_usage == 10:  # UV3
                         export_file.write(pack("4x"))
                         log("3rd UV not implemented")
