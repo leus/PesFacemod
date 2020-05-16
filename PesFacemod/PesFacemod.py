@@ -4,7 +4,7 @@ from struct import *
 import tempfile
 
 from .PesFacemodGlobalData import PesFacemodGlobalData
-from .FmdlManager import FmdlManagerBase
+from .FmdlManager import FmdlManagerBase, exec_tool
 import subprocess
 
 
@@ -178,11 +178,6 @@ oral_type = None
 packfpk = None
 
 
-def exec_tool(*args):
-    print("\t*** Executing tool: ", args)
-    return subprocess.run(args)
-
-
 class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
     bl_idname = "primary.operator"
     bl_label = "prime operator"
@@ -195,10 +190,8 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
     def unpack_files(self):
         if PesFacemodGlobalData.face_fpk != '':
             # unpack face_high.fmdl, etc.
-            try:
-                exec_tool(os.path.join('Tools', 'Gzs', 'GzsTool.exe'), PesFacemodGlobalData.face_fpk)
-            except subprocess.CalledProcessError as gzs_ex:
-                print("Gzs returned error:", gzs_ex.returncode, gzs_ex.output)
+            if not exec_tool(os.path.join('Tools', 'Gzs', 'GzsTool.exe'), PesFacemodGlobalData.face_fpk):
+                return False
 
             # unpack textures
             textures = [
@@ -216,20 +209,14 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             for texture in textures:
                 print("\tTrying to unpack ", texture + '.ftex', "...")
                 if os.path.exists(texture + '.ftex'):
-                    try:
-                        # extract DDS from Ftex
-                        exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), texture + '.ftex')
-                    except subprocess.CalledProcessError as ftex_ex:
-                        print("Ftex returned error:", ftex_ex.returncode, ftex_ex.output)
-                    try:
-                        # extract PNG from DDS
-                        (path, fname) = os.path.split(texture + '.dds')
-                        exec_tool(os.path.join('Tools', 'texconv.exe'), '-ft', 'png', texture + '.dds', '-o', path)
-                    except subprocess.CalledProcessError as ftex_ex:
-                        print("Texconv returned error:", ftex_ex.returncode, ftex_ex.output)
+                    exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), texture + '.ftex')
+                    # extract PNG from DDS
+                    (path, fname) = os.path.split(texture + '.dds')
+                    exec_tool(os.path.join('Tools', 'texconv.exe'), '-y', '-ft', 'png', texture + '.dds', '-o', path)
                 else:
                     print("\tFile not found.")
-        self.report({"INFO"}, "Files unpacked")
+                    return False
+        return True
 
     def pack_files(self):
         # pack textures
@@ -247,10 +234,10 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
         for texture in textures:
             if os.path.exists(texture + '.PNG'):  # texconv adds extension in uppercase
                 # convert from PNG to DDS
-                exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'), '-bc3',
-                          texture + '.PNG', texture + '.dds')
-                # convert to Ftex
-                exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), '-f', '0', texture + '.dds')
+                if exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'), '-bc3',
+                          texture + '.PNG', texture + '.dds'):
+                    # convert to Ftex
+                    exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), '-f', '0', texture + '.dds')
 
         # and pack face file
         xml_file = PesFacemodGlobalData.face_fpk + '.xml'
@@ -276,7 +263,10 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             pes_diff_bin_data.clear()
             PesFacemodGlobalData.load(scn.face_path)
             self.remove_temp_files("face_normals_data.bin", "face_tangents_data.bin")
-            self.unpack_files()
+            if not self.unpack_files():
+                self.report({"INFO"}, "Error unpacking files!")
+                return {'CANCELLED'}
+            self.report({"INFO"}, "Files unpacked")
 
             face_type = FaceFmdlManager(PesFacemodGlobalData.facepath, temp_path)
             print("Trying to open file ", str(os.path.abspath(PesFacemodGlobalData.face_fmdl)))

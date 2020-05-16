@@ -30,20 +30,36 @@ def log(*args, logtype='debug', sep=' '):
 
 
 def exec_tool(*args):
-    print("\t*** Executing tool: ", args)
-    subprocess.run(args)
+    path, *arguments = args
+    path = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', path))
+    escaped_args = [path, *arguments]
+    print("\t*** Executing tool: ", *escaped_args)
+    try:
+        subprocess.run(escaped_args)
+        return True
+    except subprocess.CalledProcessError as ex:
+        print("Process ended with error error:", ex.returncode, ex.output)
+        return False
+    except PermissionError as pex:
+        print("There was a permissions error: ", pex.filename, pex.args, pex.errno, pex.strerror)
+        return False
+    except FileNotFoundError as fex:
+        print("The file to execute was not found: ", fex.filename, fex.errno, fex.strerror)
+        return False
 
 
 def ftex_to_tga(ftexfilepath):
     exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), ftexfilepath)
     (fname, ext) = os.path.splitext(ftexfilepath)
-    exec_tool('Tools\\nvidia-texture-tools-2.1.1-win64\\bin64\\nvdecompress.exe', fname + '.dds', '-format', 'tga')
+    exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvdecompress.exe'), fname + '.dds',
+              '-format', 'tga')
     return fname + '.tga'
 
 
 def tga_to_dds(tgafilepath):
     (fname, ext) = os.path.splitext(tgafilepath)
-    exec_tool('Tools\\nvidia-texture-tools-2.1.1-win64\\bin64\\nvcompress.exe', '-bc3', fname + '.tga', fname + '.dds')
+    exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'), '-bc3',
+              fname + '.tga', fname + '.dds')
     exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), fname + '.dds')
     return fname + '.dds'
 
