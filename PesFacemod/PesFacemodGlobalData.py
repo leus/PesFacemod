@@ -46,7 +46,7 @@ class PesFacemodGlobalData:
             cls.face_fpk = cls.fpk_path('face.fpk')
             cls.face_fmdl = cls.fpk_path('face_fpk', 'face_high.fmdl')
             cls.hair_fmdl = cls.fpk_path('face_fpk', 'hair_high.fmdl')
-            cls.oral_fmdl = cls.fpk_path('face_fpk', 'oral_high.fmdl')
+            cls.oral_fmdl = cls.fpk_path('face_fpk', 'oral.fmdl')
             cls.diff_bin = cls.fpk_path('face_fpk', 'face_diff.bin')
 
             # textures - without extension

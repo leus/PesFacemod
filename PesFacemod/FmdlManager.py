@@ -65,8 +65,6 @@ def tga_to_dds(tgafilepath):
 
 
 def get_active_mesh():
-    # return bpy.context.scene.objects.active.data
-    # return bpy.context.window.scene.objects[0].data
     if bpy.context.object is not None:
         return bpy.context.object.data
     else:
@@ -166,9 +164,9 @@ def get_custom_vertex_normals(mesh_obj, map_name):
     for key in cv_nrm_list:
         loop_list = cv_nrm_list[key]
         avg_vec = loop_list[0]
-        # for vec in range(len(loop_list)):
-        #    vec_instance = loop_list[vec]
-        #   # avg_vec = avg_vec.slerp(vec_instance,0.5)
+        for vec in range(len(loop_list)):
+            vec_instance = loop_list[vec]
+            # avg_vec = avg_vec.slerp(vec_instance,0.5)
         nrm_avg_list.append((key, avg_vec))
 
     return nrm_avg_list
@@ -845,8 +843,8 @@ class FmdlManagerBase:
 
             work_file.seek(vertex_list_offset, 0)
             for vert in range(sub_mesh_verts):
-                x, y, z = unpack("3f", work_file.read(12))
-                vertexlist.append((x, z * -1, y))  # flip from fox engine orientation
+                x, z, y = unpack("3f", work_file.read(12))
+                vertexlist.append((x, y * -1, z))  # flip from fox engine orientation
             # print ("Vert list end ",work_file.tell(),"\n")
 
             # seek to next vertex block
@@ -1079,6 +1077,7 @@ class FmdlManagerBase:
         ex_submesh_face_tuple_list = []
         ex_submesh_uv_list = []
         ex_submesh_nrm_uv_list = []
+        ex_submesh_count = 0
         ex_custom_normals_list = []
         ex_custom_tangents_list = []
 
@@ -1108,7 +1107,9 @@ class FmdlManagerBase:
 
             if "normal_map" in obj.data.uv_layers:
                 uv_nrml_list = get_uv_map(obj, "normal_map")
-                ex_submesh_nrm_uv_list.append(uv_nrml_list)
+            else:
+                uv_nrml_list = get_uv_map(obj, "UVMap")
+            ex_submesh_nrm_uv_list.append(uv_nrml_list)
 
             log("Custom normals?", obj.data.has_custom_normals)
             custom_nrm_list = get_custom_vertex_normals(obj, "UVMap")
@@ -1120,7 +1121,7 @@ class FmdlManagerBase:
                 custom_tan_list = get_custom_vertex_tangents(obj, "UVMap")
             ex_custom_tangents_list.append(custom_tan_list)
 
-            if self.skeleton_flag and not PesFacemodGlobalData.vertexgroup_disable:
+            if self.skeleton_flag and False:  # bpy.context.scene.vertexgroup:
                 ex_submesh_vert_weights_list.append(collect_vertex_weights(obj.data.vertices))
 
             if True:  # "Hair_Anim" in obj.data.vertex_colors:
@@ -1131,8 +1132,6 @@ class FmdlManagerBase:
             else:
                 color_list = []
                 ex_submesh_vert_color_list.append(color_list)  # keeps indexes synced with submeshes
-
-            # print("ex_submesh_vert_color_list: ", ex_submesh_vert_color_list)
 
             if count == 1:
                 for ent in range(len(obj.fmdl_strings)):
@@ -1600,16 +1599,6 @@ class FmdlManagerBase:
                             export_file.write(pack("4H", hf_x, hf_z, hf_y, hf_w))
 
                     if current_usage == 3:  # color
-                        print("subm: [%d]" % (sbm))
-                        print("- vert: [%d]" % (vert))
-                        print("- len(ex_submesh_vert_color_list): %d" % (len(ex_submesh_vert_color_list)))
-
-                        # print("*******")
-                        # print(ex_submesh_vert_color_list[sbm])
-                        # print("*******")
-
-                        print("- len(ex_submesh_vert_color_list[sbm]): %d" % (len(ex_submesh_vert_color_list[sbm])))
-
                         ex_r = int(ex_submesh_vert_color_list[sbm][vert][0] * 255)
                         ex_g = int(ex_submesh_vert_color_list[sbm][vert][1] * 255)
                         ex_b = int(ex_submesh_vert_color_list[sbm][vert][2] * 255)
@@ -1617,7 +1606,7 @@ class FmdlManagerBase:
                         export_file.write(pack("4B", ex_r, ex_g, ex_b, ex_a))
 
                     if current_usage == 1:  # bone weight
-                        if not PesFacemodGlobalData.vertexgroup_disable:
+                        if False:  # bpy.context.scene.vertexgroup:
                             bw_0 = int(
                                 ex_submesh_vert_weights_list[sbm][vert][0][1] * 255)  # mesh, vertex, group, then weight
                             bw_1 = int(ex_submesh_vert_weights_list[sbm][vert][1][
@@ -1634,7 +1623,7 @@ class FmdlManagerBase:
                             bw_3 = int(self.internal_ex_submesh_vert_weights_list[sbm][vert][3][1] * 255)
                             export_file.write(pack("4B", bw_0, bw_1, bw_2, bw_3))
                     if current_usage == 7:  # bone ids
-                        if not PesFacemodGlobalData.vertexgroup_disable:
+                        if False:  # bpy.context.scene.vertexgroup:
                             bid_0 = ex_submesh_vert_weights_list[sbm][vert][0][0]  # mesh, vertex, group, then id
                             bid_1 = ex_submesh_vert_weights_list[sbm][vert][1][0]
                             bid_2 = ex_submesh_vert_weights_list[sbm][vert][2][0]
@@ -1654,15 +1643,11 @@ class FmdlManagerBase:
                         hf_v = float2halffloat((coord_v - 1) * -1)
                         export_file.write(pack("2H", hf_u, hf_v))
                     if current_usage == 9:  # UV2
-                        if "normal_map" in objlist[sbm].data.uv_layers:
-                            coord_u = ex_submesh_nrm_uv_list[sbm][vert][0]
-                            coord_v = ex_submesh_nrm_uv_list[sbm][vert][1]
-                            hf_u = float2halffloat(coord_u)
-                            hf_v = float2halffloat((coord_v - 1) * -1)
-                            export_file.write(pack("2H", hf_u, hf_v))
-                        else:
-                            log("Normal map UV apparently needed, but no normal map loaded")
-                            export_file.write(pack("2H"))
+                        coord_u = ex_submesh_nrm_uv_list[sbm][vert][0]
+                        coord_v = ex_submesh_nrm_uv_list[sbm][vert][1]
+                        hf_u = float2halffloat(coord_u)
+                        hf_v = float2halffloat((coord_v - 1) * -1)
+                        export_file.write(pack("2H", hf_u, hf_v))
                     if current_usage == 10:  # UV3
                         export_file.write(pack("4x"))
                         log("3rd UV not implemented")
@@ -1684,7 +1669,6 @@ class FmdlManagerBase:
                 f3 = ex_submesh_face_tuple_list[sbm][ftl][0]
                 f2 = ex_submesh_face_tuple_list[sbm][ftl][1]
                 f1 = ex_submesh_face_tuple_list[sbm][ftl][2]
-                # print("f1, f2, f3", f1, f2, f3)
                 export_file.write(pack("3H", f1, f2, f3))
         while (export_file.tell() % 16) != 0:  # round out the bytes to 16
             export_file.write(pack("2x"))

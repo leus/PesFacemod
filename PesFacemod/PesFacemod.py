@@ -2,10 +2,10 @@ import bpy, os, os.path, struct
 from bpy.props import StringProperty, BoolProperty, FloatProperty
 from struct import *
 import tempfile
-
+from mathutils import Vector
 from .PesFacemodGlobalData import PesFacemodGlobalData
 from .FmdlManager import FmdlManagerBase, exec_tool
-import subprocess
+import bmesh
 
 
 def log(*args, logtype='debug', sep=' '):
@@ -112,12 +112,6 @@ class PANEL_PT_file_properties(bpy.types.Panel):
         row.operator("primary.operator", text="Export Fpk", icon="EXPORT").face_opname = "export_files"
         row = box.row(align=0)
 
-        if not os.path.isfile(PesFacemodGlobalData.oral_fmdl):
-            row.label(text="Mouth set position not available!", icon="FILE_TICK")
-            row = box.row()
-        row.prop(scn, "eyes_size", text="Eye Size")
-        box.row()
-
         box = layout.box()
         row = box.row(align=1)
         row.label(text="New scene (clear data)")
@@ -127,48 +121,113 @@ class PANEL_PT_file_properties(bpy.types.Panel):
         row.operator("primary.operator", text="New scene", icon="FILE_BLANK").face_opname = "newscene"
 
 
+def get_diameter(obj, dim):
+    max_d = max([v.co[dim] for v in obj.data.vertices])
+    min_d = min([v.co[dim] for v in obj.data.vertices])
+    return max_d - min_d
+
+
+# Dimensions extracted from the base eye model we are using. I assume it's from the game.
+def get_pes_diameters(obj):
+    d_x = get_diameter(obj, 0) / 0.022276999428868294
+    d_y = get_diameter(obj, 1) / 0.022332072257995605
+    d_z = get_diameter(obj, 2) / 0.015468999743461609
+    return d_x, d_y, d_z
+
+
+def scene_eye_size(pes_factor):
+    return pes_factor * 0.05
+
+
+def save_eye(stream_handle, name, diameter_offset, position_offset):
+    if name in bpy.data.objects.keys():
+        loc = bpy.data.objects[name].location.copy()
+        d_x, d_y, d_z = get_pes_diameters(bpy.data.objects[name])
+
+        loc.x = -loc.x
+
+        print("Eye ", name)
+        print("\tdiameters:", d_x, d_y, d_z)
+        print("\tlocation:", loc)
+
+        stream_handle.seek(diameter_offset)
+        stream_handle.write(struct.pack('3f', d_z, d_y, d_x))
+        stream_handle.seek(position_offset)
+        stream_handle.write(struct.pack('3f', loc.z, loc.y, loc.x))
+    else:
+        print("Eye not present in scene: ", name)
+
+
+def pes_to_blender_location(obj_name, p1, p2, p3):
+    print("## Assigning position to ", obj_name, p1, p2, p3)
+    if obj_name in bpy.data.objects:
+        obj = bpy.data.objects[obj_name]
+        z, y, x = p1, p2, p3 * -1
+        obj.location.x = x
+        obj.location.y = y
+        obj.location.z = z
+        print("\tAssigned: ", obj.location)
+        return obj
+    else:
+        print("\tNot found!")
+        return None
+
+
+def set_eye_parameters(obj_name, diameter_x, diameter_y, diameter_z, p1, p2, p3):
+    if obj_name in bpy.data.objects:
+        obj = bpy.data.objects[obj_name]
+        # not working! need to scale in place, currently scales pivoting on origin
+        # obj.scale = (diameter_x, diameter_y, diameter_z)
+
+    return pes_to_blender_location(obj_name, p1, p2, p3)
+
+
 def pes_diff_bin_exp(diff_bin_export_filename, oralpath):
-    scn = bpy.context.scene
     header_data = open(diff_bin_export_filename, 'rb').read(4)
     header_string = str(header_data, "utf-8")
     if header_string == "FACE":
         pes_diff_data = open(diff_bin_export_filename, 'r+b')
-        # Writing eye size
-        pes_diff_data.seek(0x08)
-        pes_diff_data.write(struct.pack('3f', scn.eyes_size, scn.eyes_size, scn.eyes_size))
+
         # Writing mouth position
         if not os.path.isfile(oralpath):  # If oral.fmdl not available
             if 'mouth' in bpy.data.objects.keys():
-                m0 = (bpy.data.objects['mouth'].location[0]) * 1
-                m1 = (bpy.data.objects['mouth'].location[1]) * -1
-                m2 = (bpy.data.objects['mouth'].location[2]) * 1
+                mx, my, mz = bpy.data.objects['mouth'].location
                 pes_diff_data.seek(0x3c)
-                pes_diff_data.write(struct.pack('3f', m0, m2, m1))
+                pes_diff_data.write(struct.pack('3f', mz, my * -1, mx))
+        save_eye(pes_diff_data, 'eyeR', 0x08, 0x150)
+        save_eye(pes_diff_data, 'eyeL', 0x10, 0x160)
 
-        if 'eyeR' in bpy.data.objects.keys():
-            rx = (bpy.data.objects['eyeR'].location[0]) * -1
-            ry = (bpy.data.objects['eyeR'].location[1]) * 1
-            rz = (bpy.data.objects['eyeR'].location[2]) * 1
-            # Writing eye position
-            pes_diff_data.seek(0x150)
-            pes_diff_data.write(struct.pack('3f', rz, ry, rx))  # Write eye Right
-
-        if 'eyeL' in bpy.data.objects.keys():
-            lx = (bpy.data.objects['eyeL'].location[0]) * -1
-            ly = (bpy.data.objects['eyeL'].location[1]) * 1
-            lz = (bpy.data.objects['eyeL'].location[2]) * 1
-            pes_diff_data.seek(0x160)
-            pes_diff_data.write(struct.pack('3f', lz, ly, lx))  # Write eye Left
+        # overwrite diameter
+        # pes_diff_data.seek(0x08)
+        # pes_diff_data.write(struct.pack('3f', 1.0, 1.0, 1.0))
 
         pes_diff_data.flush()
         pes_diff_data.close()
-    return 1
+    return True
+
+
+def pes_diff_bin_imp(pes_diff_filename):
+    header_data = open(pes_diff_filename, 'rb').read(4)
+    header_string = str(header_data, "utf-8")
+    if header_string == "FACE":
+        pes_diff_data0 = open(pes_diff_filename, "rb")
+        pes_diff_data0.seek(0x08)
+        diameter_x, diameter_y, diameter_z = unpack("3f", pes_diff_data0.read(12))
+        pes_diff_data0.seek(0x3c)
+        p1, p2, p3 = unpack("3f", pes_diff_data0.read(12))
+        pes_to_blender_location('mouth', p1, p2, p3)
+        pes_diff_data0.seek(0x150)
+        p1, p2, p3 = unpack("3f", pes_diff_data0.read(12))
+        set_eye_parameters('eyeR', diameter_x, diameter_y, diameter_z, p1, p2, p3)
+        pes_diff_data0.seek(0x160)
+        p1, p2, p3 = unpack("3f", pes_diff_data0.read(12))
+        set_eye_parameters('eyeL', diameter_x, diameter_y, diameter_z, p1, p2, p3)
+    return True
 
 
 pes_face = []
 pes_hair = []
 pes_oral = []
-pes_diff_bin_data = []
 temp_path = tempfile.gettempdir()
 
 face_type = None
@@ -178,48 +237,13 @@ oral_type = None
 packfpk = None
 
 
-class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
-    bl_idname = "primary.operator"
-    bl_label = "prime operator"
-    face_opname = StringProperty()
+def unpack_files():
+    if PesFacemodGlobalData.face_fpk != '':
+        # unpack face_high.fmdl, etc.
+        if not exec_tool(os.path.join('Tools', 'Gzs', 'GzsTool.exe'), PesFacemodGlobalData.face_fpk):
+            return False
 
-    @classmethod
-    def poll(cls, context):
-        return context.mode == "OBJECT"
-
-    def unpack_files(self):
-        if PesFacemodGlobalData.face_fpk != '':
-            # unpack face_high.fmdl, etc.
-            if not exec_tool(os.path.join('Tools', 'Gzs', 'GzsTool.exe'), PesFacemodGlobalData.face_fpk):
-                return False
-
-            # unpack textures
-            textures = [
-                PesFacemodGlobalData.face_bsm_alp,
-                PesFacemodGlobalData.eye_occlusion_alp,
-                PesFacemodGlobalData.face_nrm,
-                PesFacemodGlobalData.face_srm,
-                PesFacemodGlobalData.face_trm,
-                PesFacemodGlobalData.hair_parts_bsm_alp,
-                PesFacemodGlobalData.hair_parts_nrm,
-                PesFacemodGlobalData.hair_parts_srm,
-                PesFacemodGlobalData.hair_parts_trm
-            ]
-            print("Unpacking textures...")
-            for texture in textures:
-                print("\tTrying to unpack ", texture + '.ftex', "...")
-                if os.path.exists(texture + '.ftex'):
-                    exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), texture + '.ftex')
-                    # extract PNG from DDS
-                    (path, fname) = os.path.split(texture + '.dds')
-                    exec_tool(os.path.join('Tools', 'texconv.exe'), '-y', '-ft', 'png', texture + '.dds', '-o', path)
-                else:
-                    print("\tFile not found.")
-                    return False
-        return True
-
-    def pack_files(self):
-        # pack textures
+        # unpack textures
         textures = [
             PesFacemodGlobalData.face_bsm_alp,
             PesFacemodGlobalData.eye_occlusion_alp,
@@ -231,18 +255,55 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             PesFacemodGlobalData.hair_parts_srm,
             PesFacemodGlobalData.hair_parts_trm
         ]
+        print("Unpacking textures...")
         for texture in textures:
-            if os.path.exists(texture + '.PNG'):  # texconv adds extension in uppercase
-                # convert from PNG to DDS
-                if exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'), '-bc3',
-                          texture + '.PNG', texture + '.dds'):
-                    # convert to Ftex
-                    exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), '-f', '0', texture + '.dds')
+            print("\tTrying to unpack ", texture + '.ftex', "...")
+            if os.path.exists(texture + '.ftex'):
+                exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), texture + '.ftex')
+                # extract PNG from DDS
+                (path, fname) = os.path.split(texture + '.dds')
+                exec_tool(os.path.join('Tools', 'texconv.exe'), '-y', '-ft', 'png', texture + '.dds', '-o', path)
+            else:
+                print("\tFile not found.")
+                return False
+    return True
 
-        # and pack face file
-        xml_file = PesFacemodGlobalData.face_fpk + '.xml'
-        exec_tool(os.path.join('Tools', 'Gzs', 'GzsTool.exe'), xml_file)
-        self.report({"INFO"}, "Files packed")
+
+def pack_files():
+    # pack textures
+    textures = [
+        PesFacemodGlobalData.face_bsm_alp,
+        PesFacemodGlobalData.eye_occlusion_alp,
+        PesFacemodGlobalData.face_nrm,
+        PesFacemodGlobalData.face_srm,
+        PesFacemodGlobalData.face_trm,
+        PesFacemodGlobalData.hair_parts_bsm_alp,
+        PesFacemodGlobalData.hair_parts_nrm,
+        PesFacemodGlobalData.hair_parts_srm,
+        PesFacemodGlobalData.hair_parts_trm
+    ]
+    for texture in textures:
+        if os.path.exists(texture + '.PNG'):  # texconv adds extension in uppercase
+            # convert from PNG to DDS
+            if exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'),
+                         '-bc3',
+                         texture + '.PNG', texture + '.dds'):
+                # convert to Ftex
+                exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), '-f', '0', texture + '.dds')
+
+    # and pack face file
+    xml_file = PesFacemodGlobalData.face_fpk + '.xml'
+    exec_tool(os.path.join('Tools', 'Gzs', 'GzsTool.exe'), xml_file)
+
+
+class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
+    bl_idname = "primary.operator"
+    bl_label = "prime operator"
+    face_opname = StringProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
 
     @staticmethod
     def remove_temp_files(*files):
@@ -255,18 +316,30 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
         if not PesFacemodGlobalData.good_path(scn.face_path):
             return {'FINISHED'}
 
-        global pes_face, pes_hair, pes_oral, pes_diff_bin_data, face_type, hair_type, oral_type
+        global pes_face, pes_hair, pes_oral, face_type, hair_type, oral_type
         if self.face_opname == "import_files":
             if len(pes_face) != 0:
                 return {'FINISHED'}
             PesFacemodGlobalData.clear()
-            pes_diff_bin_data.clear()
             PesFacemodGlobalData.load(scn.face_path)
             self.remove_temp_files("face_normals_data.bin", "face_tangents_data.bin")
-            if not self.unpack_files():
+            if not unpack_files():
                 self.report({"INFO"}, "Error unpacking files!")
                 return {'CANCELLED'}
             self.report({"INFO"}, "Files unpacked")
+
+            # Load base scene (mouth and eyes in default positions)
+            base_scene_path = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                           '..', 'Tools', 'base-scene.blend'))
+            print("Loading base scene: ", base_scene_path)
+            # link eyeR, eyeL and mouth
+            with bpy.data.libraries.load(base_scene_path, link=False) as (data_from, data_to):
+                data_to.objects = [name for name in data_from.objects if name in ("eyeR", "eyeL", "mouth")]
+
+            # link object to current scene
+            for obj in data_to.objects:
+                if obj is not None:
+                    bpy.context.collection.objects.link(obj)
 
             face_type = FaceFmdlManager(PesFacemodGlobalData.facepath, temp_path)
             print("Trying to open file ", str(os.path.abspath(PesFacemodGlobalData.face_fmdl)))
@@ -279,13 +352,13 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             pes_hair = hair_type.importmodel(str(os.path.abspath(PesFacemodGlobalData.hair_fmdl)))
             self.report({"INFO"}, "hair.fmdl file imported")
 
-            if os.path.exists(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl))):
+            if False:  # oral.fmdl not processed yet (vertex weights are giving me trouble)
                 print("Trying to open file ", str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
                 oral_type = OralFmdlManager(PesFacemodGlobalData.facepath, temp_path)
                 pes_oral = oral_type.importmodel(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
                 self.report({"INFO"}, "Oral.fmdl file imported")
 
-            self.pes_diff_bin_imp(PesFacemodGlobalData.diff_bin)
+            pes_diff_bin_imp(PesFacemodGlobalData.diff_bin)
             self.report({"INFO"}, "PES_DIFF.BIN Imported Succesfully!")
             print("Files imported")
             return {'FINISHED'}
@@ -303,20 +376,15 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
                 oral_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
             self.report({"INFO"}, "Oral Exported Succesfully")
 
-            if len(pes_diff_bin_data) != 0:
-                pes_diff_bin_exp(PesFacemodGlobalData.diff_bin, PesFacemodGlobalData.oral_fmdl)
-                self.report({"INFO"}, "Exporting PES_DIFF.BIN Succesfully!")
-                print("Exporting PES_DIFF.BIN Succesfully!")
-            else:
-                self.report({"WARNING"}, "Import PES_DIFF.BIN before export!!")
-                print("Import PES_DIFF.BIN before export!!")
+            pes_diff_bin_exp(PesFacemodGlobalData.diff_bin, PesFacemodGlobalData.oral_fmdl)
+            self.report({"INFO"}, "Exporting PES_DIFF.BIN Succesfully!")
 
-            self.pack_files()
+            pack_files()
+            self.report({"INFO"}, "Files packed")
 
             return {'FINISHED'}
 
         if self.face_opname == "newscene":
-            pes_diff_bin_data.clear()
             pes_face.clear()
             pes_hair.clear()
             pes_oral.clear()
@@ -324,42 +392,6 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             bpy.ops.wm.read_homefile()
             PesFacemodGlobalData.clear()
             return {'FINISHED'}
-
-    @staticmethod
-    def pes_diff_bin_imp(pes_diff_filename):
-        scn = bpy.context.scene
-        header_data = open(pes_diff_filename, 'rb').read(4)
-        header_string = str(header_data, "utf-8")
-        if header_string == "FACE":
-            pes_diff_data0 = open(pes_diff_filename, "rb")
-            pes_diff_data0.seek(0x08)
-            eyes_size = unpack("3f", pes_diff_data0.read(12))
-            pes_diff_data0.seek(0x3c)
-            m_pos = unpack("3f", pes_diff_data0.read(12))
-            pes_diff_data0.seek(0x150)
-            eyes_pos_r = unpack("3f", pes_diff_data0.read(12))
-            pes_diff_data0.seek(0x160)
-            eyes_pos_l = unpack("3f", pes_diff_data0.read(12))
-
-            scn.eyes_size = eyes_size[0]
-
-            if 'mouth' in bpy.data.objects.keys():
-                bpy.data.objects['mouth'].location[0] = (m_pos[0] * 1)
-                bpy.data.objects['mouth'].location[1] = (m_pos[2] * -1)
-                bpy.data.objects['mouth'].location[2] = (m_pos[1] * 1)
-
-            if 'eyeR' in bpy.data.objects.keys():
-                bpy.data.objects['eyeR'].location[2] = (eyes_pos_r[0] * 1)
-                bpy.data.objects['eyeR'].location[0] = (eyes_pos_r[2] * -1)
-                bpy.data.objects['eyeR'].location[1] = (eyes_pos_r[1] * 1)
-
-            if 'eyeL' in bpy.data.objects.keys():
-                bpy.data.objects['eyeL'].location[2] = (eyes_pos_l[0] * 1)
-                bpy.data.objects['eyeL'].location[0] = (eyes_pos_l[2] * -1)
-                bpy.data.objects['eyeL'].location[1] = (eyes_pos_l[1] * 1)
-
-            pes_diff_bin_data.append(eyes_size[0])
-        return 1
 
 
 class ListItem(bpy.types.PropertyGroup):
