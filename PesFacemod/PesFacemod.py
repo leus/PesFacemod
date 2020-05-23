@@ -121,105 +121,85 @@ class PANEL_PT_file_properties(bpy.types.Panel):
         row.operator("primary.operator", text="New scene", icon="FILE_BLANK").face_opname = "newscene"
 
 
-def get_radius(obj):
-    vsum = Vector()
-    for v in obj.data.vertices:
-        vsum += v.co  # sum all selected vectors together
-    midPoint = vsum / len(obj.data.vertices)  # average point
-    # get average distance from middlepoint, to account for minor variability.
-    distances = [(v.co - midPoint).length for v in obj.data.vertices]
-    averageDist = float(sum(distances) / len(distances))
-    print("radius: ", averageDist)
-    return averageDist
+def get_diameter(obj, dim):
+    max_d = max([v.co[dim] for v in obj.data.vertices])
+    min_d = min([v.co[dim] for v in obj.data.vertices])
+    return max_d - min_d
 
 
-def reference_vector(object_name):
-    obj = bpy.data.objects[object_name]
-    if obj is not None:
-        max_z = max([v.co.z for v in obj.data.vertices])
-
-        # Select all the vertices that are on the lowest Z
-        for v in obj.data.vertices:
-            if v.co.z == max_z:
-                ret = v.co.copy()
-                ret.x = 0
-                ret.y = 0
-                return ret
-    return None
-
-
-def max_vert_distance(object_name):
-    obj = bpy.data.objects[object_name]
-    verts = obj.data.vertices
-    centre = Vector([0, 0, 0])
-    for vert in verts:
-        centre += vert.co
-    centre = centre / len(verts)
-    distanceFromCentre = 0.0
-    for vert in verts:
-        vecFromCentre = vert.co - centre
-        vertDistanceFromCentre = vecFromCentre.length
-        if vertDistanceFromCentre > distanceFromCentre:
-            distanceFromCentre = vertDistanceFromCentre
-            vert1 = vert
-    distance = 0.0
-    for vert in verts:
-        vec = vert.co - vert1.co
-        vertsDistance = vec.length
-        if vertsDistance > distance:
-            distance = vertsDistance
-            vert2 = vert
-    return distance
-
-
-def get_object_location(obj_name):
-    return bpy.data.objects[obj_name].location.copy()
+# Dimensions extracted from the base eye model we are using. I assume it's from the game.
+def get_pes_diameters(obj):
+    d_x = get_diameter(obj, 0) / 0.022276999428868294
+    d_y = get_diameter(obj, 1) / 0.022332072257995605
+    d_z = get_diameter(obj, 2) / 0.015468999743461609
+    return d_x, d_y, d_z
 
 
 def scene_eye_size(pes_factor):
     return pes_factor * 0.05
 
 
-def pes_eye_size(scene_diameter):
-    return scene_diameter / 0.05
-
-
-def save_eye(ref_vector, stream_handle, name, diameter_offset, position_offset):
+def save_eye(stream_handle, name, diameter_offset, position_offset):
     if name in bpy.data.objects.keys():
-        loc = get_object_location(name)
-        loc -= ref_vector
-        diameter = pes_eye_size(max_vert_distance(name))
-        print("Eye ", name, loc, diameter)
-        # diameter
+        loc = bpy.data.objects[name].location.copy()
+        d_x, d_y, d_z = get_pes_diameters(bpy.data.objects[name])
+
+        loc.x = -loc.x
+
+        print("Eye ", name)
+        print("\tdiameters:", d_x, d_y, d_z)
+        print("\tlocation:", loc)
+
         stream_handle.seek(diameter_offset)
-        stream_handle.write(struct.pack('f', diameter))
+        stream_handle.write(struct.pack('3f', d_z, d_y, d_x))
         stream_handle.seek(position_offset)
-        stream_handle.write(struct.pack('3f', loc.z, loc.y, loc.x))  # Write eye Right
+        stream_handle.write(struct.pack('3f', loc.z, loc.y, loc.x))
     else:
         print("Eye not present in scene: ", name)
 
 
+def pes_to_blender_location(obj_name, p1, p2, p3):
+    print("## Assigning position to ", obj_name, p1, p2, p3)
+    if obj_name in bpy.data.objects:
+        obj = bpy.data.objects[obj_name]
+        z, y, x = p1, p2, p3 * -1
+        obj.location.x = x
+        obj.location.y = y
+        obj.location.z = z
+        print("\tAssigned: ", obj.location)
+        return obj
+    else:
+        print("\tNot found!")
+        return None
+
+
+def set_eye_parameters(obj_name, diameter_x, diameter_y, diameter_z, p1, p2, p3):
+    if obj_name in bpy.data.objects:
+        obj = bpy.data.objects[obj_name]
+        # not working! need to scale in place, currently scales pivoting on origin
+        # obj.scale = (diameter_x, diameter_y, diameter_z)
+
+    return pes_to_blender_location(obj_name, p1, p2, p3)
+
+
 def pes_diff_bin_exp(diff_bin_export_filename, oralpath):
-    scn = bpy.context.scene
     header_data = open(diff_bin_export_filename, 'rb').read(4)
     header_string = str(header_data, "utf-8")
     if header_string == "FACE":
         pes_diff_data = open(diff_bin_export_filename, 'r+b')
 
-        # Positions relative to this
-        v = reference_vector('Face_0')
         # Writing mouth position
         if not os.path.isfile(oralpath):  # If oral.fmdl not available
             if 'mouth' in bpy.data.objects.keys():
-                mx, my, mz = get_object_location('mouth')
+                mx, my, mz = bpy.data.objects['mouth'].location
                 pes_diff_data.seek(0x3c)
                 pes_diff_data.write(struct.pack('3f', mz, my * -1, mx))
-        save_eye(v, pes_diff_data, 'eyeR', 0x08, 0x150)
-        save_eye(v, pes_diff_data, 'eyeL', 0x10, 0x160)
+        save_eye(pes_diff_data, 'eyeR', 0x08, 0x150)
+        save_eye(pes_diff_data, 'eyeL', 0x10, 0x160)
 
         # overwrite diameter
-        pes_diff_data.seek(0x08)
-        pes_diff_data.write(struct.pack('3f', 1.0, 1.0, 1.0))
+        # pes_diff_data.seek(0x08)
+        # pes_diff_data.write(struct.pack('3f', 1.0, 1.0, 1.0))
 
         pes_diff_data.flush()
         pes_diff_data.close()
@@ -233,65 +213,16 @@ def pes_diff_bin_imp(pes_diff_filename):
         pes_diff_data0 = open(pes_diff_filename, "rb")
         pes_diff_data0.seek(0x08)
         diameter_x, diameter_y, diameter_z = unpack("3f", pes_diff_data0.read(12))
-        print("diameters: ", diameter_x, diameter_y, diameter_z)
         pes_diff_data0.seek(0x3c)
-        mouth_pos_r_x, mouth_pos_r_y, mouth_pos_r_z = unpack("3f", pes_diff_data0.read(12))
-        print("mouth: ", mouth_pos_r_x, mouth_pos_r_y, mouth_pos_r_z)
+        p1, p2, p3 = unpack("3f", pes_diff_data0.read(12))
+        pes_to_blender_location('mouth', p1, p2, p3)
         pes_diff_data0.seek(0x150)
-        eyes_pos_r_x, eyes_pos_r_y, eyes_pos_r_z = unpack("3f", pes_diff_data0.read(12))
-        print("right eye: ", eyes_pos_r_x, eyes_pos_r_y, eyes_pos_r_z)
+        p1, p2, p3 = unpack("3f", pes_diff_data0.read(12))
+        set_eye_parameters('eyeR', diameter_x, diameter_y, diameter_z, p1, p2, p3)
         pes_diff_data0.seek(0x160)
-        eyes_pos_l_x, eyes_pos_l_y, eyes_pos_l_z = unpack("3f", pes_diff_data0.read(12))
-        print("left eye: ", eyes_pos_l_x, eyes_pos_l_y, eyes_pos_l_z)
-
-        # translate to Blender coordinates
-        if 'mouth' in bpy.data.objects.keys():
-            bpy.data.objects['mouth'].location.x = mouth_pos_r_x
-            bpy.data.objects['mouth'].location.y = mouth_pos_r_z * -1
-            bpy.data.objects['mouth'].location.z = mouth_pos_r_y
-
-        # The number stored in the diff file is not in game units, but a factor of an unknown number
-        # I'm assuming 25mm radius (50mm)
-        eye_diameter = scene_eye_size(diameter_x)
-
-        # PES uses x (breadth), y (height), z (depth), but it stores it as z, y, x
-        # Blender uses x (breadth), z (height), y (depth)
-        eyeL = create_eye('eyeL', scene_eye_size(eye_diameter), eyes_pos_l_x, eyes_pos_l_z, eyes_pos_l_y)
-        eyeR = create_eye('eyeR', scene_eye_size(eye_diameter), eyes_pos_r_x, eyes_pos_r_z, eyes_pos_r_y)
-
-        v = reference_vector('Face_0')
-        if v is not None:
-            eyeL.location += v
-            eyeR.location += v
+        p1, p2, p3 = unpack("3f", pes_diff_data0.read(12))
+        set_eye_parameters('eyeL', diameter_x, diameter_y, diameter_z, p1, p2, p3)
     return True
-
-
-# Eyes seem to be relative to the topmost vertex in the Face_0 mesh.
-def create_eye(name, diameter, x, y, z):
-    print("Creating eye: ", name, diameter, x, y, z)
-
-    mesh = bpy.data.meshes.new(name)
-    basic_sphere = bpy.data.objects.new(name, mesh)
-
-    # Add the object into the scene.
-    bpy.context.collection.objects.link(basic_sphere)
-
-    # Select the newly created object
-    bpy.context.view_layer.objects.active = basic_sphere
-    basic_sphere.select_set(True)
-
-    # Construct the bmesh sphere and assign it to the blender mesh.
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, diameter=diameter)
-    bm.to_mesh(mesh)
-    bm.free()
-
-    bpy.ops.object.modifier_add(type='SUBSURF')
-    bpy.ops.object.shade_smooth()
-
-    basic_sphere.location = (x, y, z)
-
-    return basic_sphere
 
 
 pes_face = []
@@ -396,6 +327,19 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
                 self.report({"INFO"}, "Error unpacking files!")
                 return {'CANCELLED'}
             self.report({"INFO"}, "Files unpacked")
+
+            # Load base scene (mouth and eyes in default positions)
+            base_scene_path = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                           '..', 'Tools', 'base-scene.blend'))
+            print("Loading base scene: ", base_scene_path)
+            # link eyeR, eyeL and mouth
+            with bpy.data.libraries.load(base_scene_path, link=False) as (data_from, data_to):
+                data_to.objects = [name for name in data_from.objects if name in ("eyeR", "eyeL", "mouth")]
+
+            # link object to current scene
+            for obj in data_to.objects:
+                if obj is not None:
+                    bpy.context.collection.objects.link(obj)
 
             face_type = FaceFmdlManager(PesFacemodGlobalData.facepath, temp_path)
             print("Trying to open file ", str(os.path.abspath(PesFacemodGlobalData.face_fmdl)))
