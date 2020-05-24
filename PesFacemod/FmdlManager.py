@@ -350,6 +350,36 @@ def add_image_texture_to_material(node_type, texture_path, material):
         print("I don't know how to handle '%s', ignoring texture", node_type)
 
 
+def add_image_to_material(method, filename, material):
+    png_file = PesFacemodGlobalData.tex_path(filename + '.PNG')
+    if os.path.exists(png_file):
+        print("\t\tAdding texture to material '%s'" % png_file)
+        add_image_texture_to_material(method, png_file, material)
+    else:
+        print("\t\t** Image not found: ", png_file)
+
+
+def apply_textures():
+    # Arbitrary materials - one for the face, one for the hair, and let's be done with it
+
+    # face
+    face_mat = get_material("skin_material")
+    add_image_to_material("Base_Tex_SRGB",  "face_bsm_alp", face_mat)
+    add_image_to_material("SpecularMap_Tex_LIN",  "face_srm", face_mat)
+    add_image_to_material("NormalMap_Tex_NRM",  "face_nrm", face_mat)
+    add_image_to_material("Translucent_Tex_LIN",  "face_trm", face_mat)
+    for obj in ['Face_0', 'Face_2', 'Hair_0']:
+        bpy.data.objects[obj].data.materials.append(face_mat)
+
+    hair_mat = get_material("hair_material")
+    add_image_to_material("Base_Tex_2_SRGB",  "hair_parts_bsm_alp", hair_mat)
+    add_image_to_material("SpecularMap_Tex_LIN",  "hair_parts_srm", hair_mat)
+    add_image_to_material("NormalMap_Tex_NRM",  "hair_parts_nrm", hair_mat)
+    add_image_to_material("Translucent_Tex_LIN",  "hair_parts_trm", hair_mat)
+    for obj in ['Hair_1']:
+        bpy.data.objects[obj].data.materials.append(hair_mat)
+
+
 def get_material(texture_name):
     if texture_name in bpy.data.materials:
         return bpy.data.materials[texture_name]
@@ -972,56 +1002,6 @@ class FmdlManagerBase:
                         collect_vertex_weights(submesh_object.data.vertices))
                     remove_vertex_weights(submesh_object, bone_sub_list)
 
-        self.apply_textures()
-
-    def apply_textures(self):
-        print("Material assignment: ", self.material_assignment)
-        print("Textures: ", self.textures)
-
-        print("Creating materials")
-        print("\tFound %d textures" % (len(self.textures)))
-        print("\t\tblock 6: ", self.block6_data_list)
-        print("\t\tblock 7: ", self.mat_param_data_list)
-        for tup in self.block4_data_list:
-            (name_index, mat_index, texture_count, param_count, first_texture_index, first_param_index) = tup
-            material_name = self.string_list[name_index]
-            print("\t%d - Texture: %s" % (name_index, material_name))
-
-            texture_assignments = self.mat_param_data_list
-            bmaterial = get_material(material_name)
-            for texture_index in range(first_texture_index, first_texture_index + texture_count):
-                if texture_index >= len(texture_assignments):
-                    print("Texture index not found in block6? %d > %d" % (texture_index, len(texture_assignments)))
-                else:
-                    type_name_index, texture_definition_index = texture_assignments[texture_index]
-                    texture_file_name_index, texture_folder_name_index = self.block6_data_list[texture_definition_index]
-                    texture_file_name = self.string_list[texture_file_name_index]
-                    type_name = self.string_list[type_name_index]
-                    print("\t\t\tTexture type %s : %s" % (type_name, texture_file_name))
-                    file_without_ext, ext = os.path.splitext(
-                        os.path.join(os.path.normpath(self.sourceimages_path), texture_file_name))
-                    png_file = file_without_ext + '.PNG'
-                    if os.path.exists(png_file):
-                        print("\t\tAdding texture to material '%s'" % png_file)
-                        add_image_texture_to_material(type_name, png_file, bmaterial)
-                    else:
-                        print("\t\t--> file not found: '%s'", png_file)
-        print("Assigning materials")
-        i = 0
-        for mesh in self.internal_mesh_list:
-            material_name = self.string_list[self.material_assignment[i].name_index]
-            print("\tAttempting to assign texture '%s' to mesh %d" % (material_name, i))
-            i = i + 1
-            bmaterial = get_material(material_name)
-            if bmaterial:
-                print("\t\tMaterial found, assigning...", bmaterial)
-                if mesh.data.materials:
-                    mesh.data.materials[0] = bmaterial
-                else:
-                    mesh.data.materials.append(bmaterial)
-            else:
-                print("\t\tMaterial not found, mesh without material")
-
     def importmodel(self, file_path):
         # reinitialize all variables
         self.byte_16 = 0
@@ -1065,6 +1045,7 @@ class FmdlManagerBase:
         self.internal_ex_submesh_vert_weights_list.clear()
 
         self.parse_fmdl(file_path)
+        self.show_materials()
         return self.local_mesh_data
 
     def exportmodel(self, fmdl_filename):
@@ -1689,3 +1670,40 @@ class FmdlManagerBase:
         for poly in obj_data.polygons:
             for idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
                 color_layer.data[idx].color = (1.0, 1.0, 1.0, 1.0)
+
+    def show_materials(self):
+        print("Material assignment: ", self.material_assignment)
+        print("Textures: ", self.textures)
+
+        print("\tFound %d textures" % (len(self.textures)))
+        print("\t\tblock 6: ", self.block6_data_list)
+        print("\t\tblock 7: ", self.mat_param_data_list)
+        for tup in self.block4_data_list:
+            (name_index, mat_index, texture_count, param_count, first_texture_index, first_param_index) = tup
+            material_name = self.string_list[name_index]
+            print("\t%d - Texture: %s" % (name_index, material_name))
+
+            texture_assignments = self.mat_param_data_list
+            for texture_index in range(first_texture_index, first_texture_index + texture_count):
+                if texture_index >= len(texture_assignments):
+                    print("Texture index not found in block6? %d > %d" % (texture_index, len(texture_assignments)))
+                else:
+                    type_name_index, texture_definition_index = texture_assignments[texture_index]
+                    texture_file_name_index, texture_folder_name_index = self.block6_data_list[texture_definition_index]
+                    texture_file_name = self.string_list[texture_file_name_index]
+                    type_name = self.string_list[type_name_index]
+                    print("\t\t\tTexture type %s : %s" % (type_name, texture_file_name))
+                    file_without_ext, ext = os.path.splitext(
+                        os.path.join(os.path.normpath(self.sourceimages_path), texture_file_name))
+                    png_file = file_without_ext + '.PNG'
+                    if os.path.exists(png_file):
+                        print("\t\tTexture applied to material '%s'" % png_file)
+                    else:
+                        print("\t\t--> file not found: '%s'", png_file)
+
+        print("Default material assignments:")
+        i = 0
+        for mesh in self.internal_mesh_list:
+            material_name = self.string_list[self.material_assignment[i].name_index]
+            print("\tTexture '%s' assigned to mesh %d" % (material_name, i))
+            i = i + 1

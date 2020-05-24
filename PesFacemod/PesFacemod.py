@@ -4,7 +4,7 @@ from struct import *
 import tempfile
 from mathutils import Vector
 from .PesFacemodGlobalData import PesFacemodGlobalData
-from .FmdlManager import FmdlManagerBase, exec_tool
+from .FmdlManager import FmdlManagerBase, exec_tool, apply_textures
 import bmesh
 
 
@@ -361,6 +361,9 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             pes_diff_bin_imp(PesFacemodGlobalData.diff_bin)
             self.report({"INFO"}, "PES_DIFF.BIN Imported Succesfully!")
             print("Files imported")
+
+            apply_textures()
+
             return {'FINISHED'}
 
         if self.face_opname == "export_files":
