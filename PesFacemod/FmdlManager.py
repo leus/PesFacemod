@@ -29,6 +29,13 @@ def log(*args, logtype='debug', sep=' '):
     pass
 
 
+def refresh_offset(file, start, block_number):
+    current_pos = file.tell()
+    file.seek(start + (block_number * 8) + 4)
+    file.write(pack("I", current_pos))
+    file.seek(current_pos)
+
+
 def exec_tool(*args):
     path, *arguments = args
     path = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', path))
@@ -38,7 +45,7 @@ def exec_tool(*args):
         subprocess.run(escaped_args)
         return True
     except subprocess.CalledProcessError as ex:
-        print("Process ended with error error:", ex.returncode, ex.output)
+        print("Process ended with error:", ex.returncode, ex.output)
         return False
     except PermissionError as pex:
         print("There was a permissions error: ", pex.filename, pex.args, pex.errno, pex.strerror)
@@ -83,7 +90,7 @@ def collect_objects(obj_type):
     return obj_list
 
 
-def collect_vertex_colors(mesh_data, layer_name):
+def collect_vertex_colors(mesh_data, layer_name, destination_list):
     color_layer = mesh_data.vertex_colors[layer_name].data
     v_loop_color_list = {}
     for loop in mesh_data.loops:
@@ -94,11 +101,8 @@ def collect_vertex_colors(mesh_data, layer_name):
         else:
             v_loop_color_list[loop.vertex_index].append(color_layer[loop.vertex_index].color)
 
-    v_color_list = []
     for key in v_loop_color_list:  # not sure, may have to average values from multiple tuples per vertex
-        v_color_list.append(
-            v_loop_color_list[key][0])  # decided on less accurate but quick option of picking just first color
-    return v_color_list
+        destination_list[key] = v_loop_color_list[key][0]
 
 
 def normalize_tangents(in_x, in_y, in_z):
@@ -159,7 +163,7 @@ def get_custom_vertex_normals(mesh_obj, map_name):
     # I think the idea of this code was to get the average of each
     # normal as each vertex can have more than one loop, and their normals may
     # be misaligned; so they tried to average it at the beginning. For some
-    # reason that code was uncommented.
+    # reason that code was commented.
     nrm_avg_list = []
     for key in cv_nrm_list:
         loop_list = cv_nrm_list[key]
@@ -208,9 +212,10 @@ def generate_skeleton(skeleton_prefix, bone_name_list, bone_position_list):
     rig.location = (0, 0, 0)
     amt.show_names = True
     scn = bpy.context.scene
-    scn.objects.link(rig)
-    scn.objects.active = rig
-    rig.select = True
+    scn.collection.objects.link(rig)
+    # scn.objects.active = rig
+    bpy.context.view_layer.objects.active = rig
+    rig.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.object.mode_set(
         mode='EDIT')  # apparently theres's a bug where mode switch only sticks when call twice in a row
@@ -220,19 +225,12 @@ def generate_skeleton(skeleton_prefix, bone_name_list, bone_position_list):
         b_x = bone_position_list[bone_number][0]
         b_y = bone_position_list[bone_number][1]
         b_z = bone_position_list[bone_number][2]
-        # new_bone.head = (b_x,b_y,b_z) #bone placement needs to account for parenting
-        # new_bone.tail = (b_x,b_y+.1,b_z)
-
-        # quick and dirty place holder
-        new_bone.head = (0, bone_number * 0.1, 0.0)
-        new_bone.tail = (0, bone_number * 0.1, 0.1)
+        new_bone.head = (b_x, b_y, b_z)  # bone placement needs to account for parenting
+        new_bone.tail = (b_x, b_y + .1, b_z)
 
     rig.hide_viewport = True
-
-    scn.update()
-
+    print("Creating skeleton: ", amt, rig)
     bpy.ops.object.mode_set(mode='OBJECT')
-
     return rig
 
 
@@ -275,20 +273,24 @@ def allocate_maps(mesh_obj, face_list, uvlist, uvlist_normal):
     mapping_mesh.free()
 
 
-def set_vertex_colors(obj_data, color_list):
-    obj_data.vertex_colors.new(name='Edit_Mode')
-    color_layer = obj_data.vertex_colors.active
-    for poly in obj_data.polygons:
-        for idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
-            c_r = color_list[obj_data.loops[idx].vertex_index][0]  # filtering out the alpha channel
-            c_g = color_list[obj_data.loops[idx].vertex_index][1]
-            c_b = color_list[obj_data.loops[idx].vertex_index][2]
-            color_layer.data[idx].color = (c_r, c_g, c_b, 1.0)
+def set_vertex_colors(layer_name, obj_data, color_list):
+    if layer_name not in obj_data.vertex_colors.keys():
+        color_layer = obj_data.vertex_colors.new(name=layer_name)
+        for poly in obj_data.polygons:
+            for idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
+                c_r = color_list[obj_data.loops[idx].vertex_index][0]  # filtering out the alpha channel
+                c_g = color_list[obj_data.loops[idx].vertex_index][1]
+                c_b = color_list[obj_data.loops[idx].vertex_index][2]
+                color_layer.data[idx].color = (c_r, c_g, c_b, 1.0)
+        print("Vertex colors: Creating layer: ", obj_data.vertex_colors.keys())
+    else:
+        print("Vertex colors: Layer already present: ", layer_name, obj_data.vertex_colors.keys())
 
 
 def set_vertex_weights(mesh_obj, bone_name_list, bone_id_list, bone_weight_list):
     for bone_number in range(len(bone_name_list)):
         v_group = mesh_obj.vertex_groups.new(name=bone_name_list[bone_number])
+        print("Generating vertex group", v_group)
     for vert_inst in range(len(mesh_obj.data.vertices)):
         id_tuple = bone_id_list[vert_inst]
         weight_tuple = bone_weight_list[vert_inst]
@@ -301,11 +303,6 @@ def set_vertex_weights(mesh_obj, bone_name_list, bone_id_list, bone_weight_list)
             mesh_obj.vertex_groups[id_tuple[2]].add((vert_inst,), weight_tuple[2], 'ADD')
         if weight_tuple[3] > 0.0:
             mesh_obj.vertex_groups[id_tuple[3]].add((vert_inst,), weight_tuple[3], 'ADD')
-
-
-def remove_vertex_weights(mesh_obj, bone_name_list):
-    for bone_number in range(len(bone_name_list)):
-        v_group = mesh_obj.vertex_groups.clear()
 
 
 def collect_vertex_weights(vertex_data):
@@ -324,7 +321,8 @@ def collect_vertex_weights(vertex_data):
 
 
 def add_image_texture_to_material(node_type, texture_path, material):
-    if node_type in ('Base_Tex_SRGB', 'NormalMap_Tex_NRM', 'SpecularMap_Tex_LIN', 'Base_Tex_2_SRGB'):
+    if node_type in (
+            'Base_Tex_SRGB', 'NormalMap_Tex_NRM', 'SpecularMap_Tex_LIN', 'Base_Tex_2_SRGB', 'Translucent_Tex_LIN'):
         if os.path.exists(texture_path):
             teximage = bpy.data.images.load(texture_path)
         else:
@@ -346,6 +344,8 @@ def add_image_texture_to_material(node_type, texture_path, material):
             material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Normal'])
         elif node_type == 'SpecularMap_Tex_LIN':
             material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Specular'])
+        elif node_type == 'Translucent_Tex_LIN':
+            material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Subsurface'])
     else:
         print("I don't know how to handle '%s', ignoring texture", node_type)
 
@@ -364,18 +364,18 @@ def apply_textures():
 
     # face
     face_mat = get_material("skin_material")
-    add_image_to_material("Base_Tex_SRGB",  "face_bsm_alp", face_mat)
-    add_image_to_material("SpecularMap_Tex_LIN",  "face_srm", face_mat)
-    add_image_to_material("NormalMap_Tex_NRM",  "face_nrm", face_mat)
-    add_image_to_material("Translucent_Tex_LIN",  "face_trm", face_mat)
+    add_image_to_material("Base_Tex_SRGB", "face_bsm_alp", face_mat)
+    add_image_to_material("SpecularMap_Tex_LIN", "face_srm", face_mat)
+    add_image_to_material("NormalMap_Tex_NRM", "face_nrm", face_mat)
+    add_image_to_material("Translucent_Tex_LIN", "face_trm", face_mat)
     for obj in ['Face_0', 'Face_2', 'Hair_0']:
         bpy.data.objects[obj].data.materials.append(face_mat)
 
     hair_mat = get_material("hair_material")
-    add_image_to_material("Base_Tex_2_SRGB",  "hair_parts_bsm_alp", hair_mat)
-    add_image_to_material("SpecularMap_Tex_LIN",  "hair_parts_srm", hair_mat)
-    add_image_to_material("NormalMap_Tex_NRM",  "hair_parts_nrm", hair_mat)
-    add_image_to_material("Translucent_Tex_LIN",  "hair_parts_trm", hair_mat)
+    add_image_to_material("Base_Tex_2_SRGB", "hair_parts_bsm_alp", hair_mat)
+    add_image_to_material("SpecularMap_Tex_LIN", "hair_parts_srm", hair_mat)
+    add_image_to_material("NormalMap_Tex_NRM", "hair_parts_nrm", hair_mat)
+    add_image_to_material("Translucent_Tex_LIN", "hair_parts_trm", hair_mat)
     for obj in ['Hair_1']:
         bpy.data.objects[obj].data.materials.append(hair_mat)
 
@@ -500,7 +500,7 @@ class FmdlManagerBase:
         self.textures = []
         self.sourceimages_path = os.path.normpath(os.path.join(os.path.dirname(base_path), '..',
                                                                'sourceimages/#windx11'))
-        self.vertexgroup_disable = True
+        self.vertexgroup_disable = False
         self.auto_smooth = True
         self.temp_path = tempfile_path
         super().__init__()
@@ -525,12 +525,12 @@ class FmdlManagerBase:
             block_id = unpack("H", work_file.read(2))[0]
             entry_count = unpack("H", work_file.read(2))[0]
             block_offset = unpack("I", work_file.read(4))[0]
-            self.section0_block_list[block_id] = (block_id, entry_count, block_offset)
+            self.section0_block_list[block_id] = [block_id, entry_count, block_offset]
 
         # print ("entry1 ",work_file.tell(),"\n")
         for data_block1 in range(self.section1_header_count):
             block_id, block_offset, block_size = unpack("3I", work_file.read(12))
-            self.section1_block_list[block_id] = (block_id, block_offset, block_size)
+            self.section1_block_list[block_id] = [block_id, block_offset, block_size]
 
         sub_mesh_count = self.section0_block_list[3][1]
         log("sub_mesh_count", sub_mesh_count)
@@ -908,6 +908,8 @@ class FmdlManagerBase:
                         fl_y = unpack('f', str1)[0]
                         fl_z = unpack('f', str2)[0]
                         fl_w = unpack('f', str3)[0]
+
+                        print("Normals: ", sx, sy, sz, sw, str0, str1, str2, str3, fl_x, fl_y, fl_z, fl_w)
                         v_normals_list.append((fl_x, fl_z * -1, fl_y))  # flip from fox engine orientation
                     if current_usage == 14:  # tangents
                         tan_x, tan_y, tan_z, tan_w = unpack("4H", work_file.read(8))  # actually half floats
@@ -973,9 +975,7 @@ class FmdlManagerBase:
                 sub_mesh_data.use_auto_smooth = True
             # apply vertex colors
             if len(vertex_color_list) != 0:
-                set_vertex_colors(submesh_object.data, vertex_color_list)
-                if self.process_normals:
-                    self.color_vertex(submesh_object.data)
+                set_vertex_colors(self.model_type + '_Anim', submesh_object.data, vertex_color_list)
             self.local_mesh_data.append(sub_mesh_data)
             # populate sring list for editing
             if subm == 1:
@@ -985,22 +985,14 @@ class FmdlManagerBase:
                     print("item.name = ", mtl_list[st])
             # link to skeleton
             if self.skeleton_flag:
-                if not self.vertexgroup_disable:
-                    mod = submesh_object.modifiers.new(self.model_type + '_rig_modifier', 'ARMATURE')
-                    mod.object = mesh_rig
-                    mod.use_bone_envelopes = False
-                    mod.use_vertex_groups = True
-                    mesh_rig.select = False
-                    bone_group_id = self.object_data_list[subm][2]
-                    bone_sub_list = submesh_bone_names_list[bone_group_id]
-                    set_vertex_weights(submesh_object, bone_sub_list, bone_id_list, bone_weight_list)
-                else:
-                    bone_group_id = self.object_data_list[subm][2]
-                    bone_sub_list = submesh_bone_names_list[bone_group_id]
-                    set_vertex_weights(submesh_object, bone_sub_list, bone_id_list, bone_weight_list)
-                    self.internal_ex_submesh_vert_weights_list.append(
-                        collect_vertex_weights(submesh_object.data.vertices))
-                    remove_vertex_weights(submesh_object, bone_sub_list)
+                mod = submesh_object.modifiers.new(self.model_type + '_rig_modifier', 'ARMATURE')
+                mod.object = mesh_rig
+                mod.use_bone_envelopes = False
+                mod.use_vertex_groups = True
+                mesh_rig.select_set(False)
+                bone_group_id = self.object_data_list[subm][2]
+                bone_sub_list = submesh_bone_names_list[bone_group_id]
+                set_vertex_weights(submesh_object, bone_sub_list, bone_id_list, bone_weight_list)
 
     def importmodel(self, file_path):
         # reinitialize all variables
@@ -1092,7 +1084,7 @@ class FmdlManagerBase:
                 uv_nrml_list = get_uv_map(obj, "UVMap")
             ex_submesh_nrm_uv_list.append(uv_nrml_list)
 
-            log("Custom normals?", obj.data.has_custom_normals)
+            print("Custom normals?", obj.data.has_custom_normals)
             custom_nrm_list = get_custom_vertex_normals(obj, "UVMap")
             ex_custom_normals_list.append(custom_nrm_list)
 
@@ -1102,17 +1094,16 @@ class FmdlManagerBase:
                 custom_tan_list = get_custom_vertex_tangents(obj, "UVMap")
             ex_custom_tangents_list.append(custom_tan_list)
 
-            if self.skeleton_flag and False:  # bpy.context.scene.vertexgroup:
+            if self.skeleton_flag:
                 ex_submesh_vert_weights_list.append(collect_vertex_weights(obj.data.vertices))
 
-            if True:  # "Hair_Anim" in obj.data.vertex_colors:
-                color_list = []
-                for color in obj.data.vertex_colors.keys():
-                    color_list = collect_vertex_colors(obj.data, color)
-                ex_submesh_vert_color_list.append(color_list)  # keeps indexes synced with submeshes
-            else:
-                color_list = []
-                ex_submesh_vert_color_list.append(color_list)  # keeps indexes synced with submeshes
+            vertex_color_list = []
+            if obj.data.vertex_colors:
+                # initialize list of default vertex colors
+                vertex_color_list = [[1, 1, 1, 1]] * len(obj.data.vertices)
+                for layer in obj.data.vertex_colors.keys():
+                    collect_vertex_colors(obj.data, layer, vertex_color_list)
+            ex_submesh_vert_color_list.append(vertex_color_list)
 
             if count == 1:
                 for ent in range(len(obj.fmdl_strings)):
@@ -1226,8 +1217,8 @@ class FmdlManagerBase:
             face_buffer_total += rounded_bytes
             log("total face bytes", face_buffer_total)
 
-        while (
-                face_buffer_total % 16) != 0:  # might still need to pad out to bytes divisble by 16, but only at very end of block?
+        # might still need to pad out to bytes divisble by 16, but only at very end of block?
+        while (face_buffer_total % 16) != 0:
             face_buffer_total += 2
 
         # not sure if an extra 32 bytes is necessary for unknown block? seems to contain lod face vert indexes
@@ -1242,59 +1233,58 @@ class FmdlManagerBase:
         block1_offset = 0
         if self.section1_block_list.get(0) is not None:  # currently no idea of what this section does
             ex_size = self.section1_block_list[0][2]
-            ex_section1_block_list.append((0, block1_offset, ex_size))
+            ex_section1_block_list.append([0, block1_offset, ex_size])
             block1_offset += ex_size
         if self.section1_block_list.get(1) is not None:  # currently no idea of what this section does
             ex_type = self.section1_block_list[1][0]
             ex_size = self.section1_block_list[1][2]
-            ex_section1_block_list.append((1, block1_offset, ex_size))
+            ex_section1_block_list.append([1, block1_offset, ex_size])
             block1_offset += ex_size
         if self.section1_block_list.get(2) is not None:
             ex_size = vert_buffer_total + uv_buffer_total + face_buffer_total + 32  # extra 32 bytes for lod faces???
-            ex_section1_block_list.append((2, block1_offset, ex_size))
+            ex_section1_block_list.append([2, block1_offset, ex_size])
             block1_offset += ex_size
         if self.section1_block_list.get(3) is not None:  # string block
             ex_size = self.section1_block_list[3][2]
-            ex_section1_block_list.append((3, block1_offset, ex_size))
+            ex_section1_block_list.append([3, block1_offset, ex_size])
             block1_offset += ex_size
 
         # EXPORT segment, for the most part
         #
 
-        ##set parameters, then pack
-
+        # set parameters, then pack
         export_file = open(fmdl_filename, 'wb')
-
         fmdl_string = "FMDL"
         export_file.write(pack("4s", fmdl_string.encode("utf-8")))
         export_file.write(pack("4B", 133, 235, 1, 64))  # replace values with hex literals for clarity
         export_file.write(pack("B7x", 64))
+        # 255 for face/hair/suit =skeletons, 222 for ball = no skeletons
+        export_file.write(pack("3B5x", self.byte_16, 127, 23))
+        # 15 for face/hair/suit =skeletons, 13 for ball
+        export_file.write(pack("1B7x", self.byte_32))
 
-        export_file.write(
-            pack("3B5x", self.byte_16, 127, 23))  # 255 for face/hair/suit =skeletons, 222 for ball = no skeletons
+        export_file.write(pack("2I", self.section0_header_count, self.section1_header_count))
 
-        export_file.write(pack("1B7x", self.byte_32))  # 15 for face/hair/suit =skeletons, 13 for ball
-
-        #
-        # FOR testing PURPOSES: just copy old header offsets,
-        # in practice filler values may have to be written and then updated after the subheaders are filled in
-        #
-
-        export_file.write(pack("2I", self.section0_header_count,
-                               self.section1_header_count))  # 19 for face/hair/suit =skeletons, 17 for ball
         export_file.write(pack("2I", self.section0_offset, self.Section0_length))  # offset =(header-count x 8) + 64
         export_file.write(pack("2I", self.section1_offset,
                                block1_offset))  # offset =(header-count x 12) + section0_offset + 4 [or bytes to make header divisble by 16]
         export_file.write(pack("8x"))
 
+        # Offsets will be refreshed below
+        section_0_offsets = export_file.tell()
+        print("Section 0 Offset start: ", section_0_offsets)
         for key in self.section0_block_list:
-            export_file.write(
-                pack("2H", self.section0_block_list[key][0], self.section0_block_list[key][1]))  # id, entry count
+            print("Original offset for Section 0, key:", key, self.section0_block_list[key][2])
+            # id, entry count
+            export_file.write(pack("2H", self.section0_block_list[key][0], self.section0_block_list[key][1]))
             # do math for section offsets
-            export_file.write(
-                pack("I", self.section0_block_list[key][2]))  # FOR testing PURPOSES: just copy the old offset
+            # FOR testing PURPOSES: just copy the old offset
+            export_file.write(pack("I", self.section0_block_list[key][2]))
 
+        section_1_offsets = export_file.tell()
+        print("Section 1 Offset start: ", section_1_offsets)
         for ent in range(len(ex_section1_block_list)):
+            print("Original offset for Section 1, key:", ent, ex_section1_block_list[ent][1])
             export_file.write(pack("I", ex_section1_block_list[ent][0]))  # id
             export_file.write(pack("I", ex_section1_block_list[ent][1]))  # offset
             export_file.write(pack("I", ex_section1_block_list[ent][2]))  # length
@@ -1304,7 +1294,10 @@ class FmdlManagerBase:
         log("md", filler_bytes)
         export_file.write(pack(str(filler_bytes) + "x"))
 
-        if self.skeleton_flag == True:
+        # Section 0
+        section_0_start = export_file.tell()
+        if self.skeleton_flag:
+            self.section0_block_list[0][2] = export_file.tell()
             for skl in range(self.section0_block_list[0][1]):
                 bone_string_id = self.skeleton_list[skl][0]
                 bone_parent = self.skeleton_list[skl][1]
@@ -1327,12 +1320,14 @@ class FmdlManagerBase:
                 export_file.write(pack("4f", bx_l, by_l, bz_l, bw_l))
                 export_file.write(pack("4f", bx_w, by_w, bz_w, bw_w))
 
+        self.section0_block_list[1][2] = export_file.tell()
         for mgd in range(self.section0_block_list[1][1]):
             name_position = self.mesh_group_def_list[mgd][0]
             invisibility_flag = self.mesh_group_def_list[mgd][1]
             parent_id = self.mesh_group_def_list[mgd][2]
             export_file.write(pack("HBx2H", name_position, invisibility_flag, parent_id, 0xFFFF))
 
+        self.section0_block_list[2][2] = export_file.tell()
         for oba in range(self.section0_block_list[2][1]):
             mesh_group_id = self.object_assignment_list[oba][0]
             mesh_group_obj_count = self.object_assignment_list[oba][1]
@@ -1348,6 +1343,7 @@ class FmdlManagerBase:
         # face and hair model files have an undocumented behaviour that can add 6 or 12 verts to one of its first_face_vert_ids
 
         previous_face_vert_offset = 0
+        self.section0_block_list[3][2] = export_file.tell()
         for obd in range(self.section0_block_list[3][1]):
             unknown_int0 = self.object_data_list[obd][0]
             mat_instance_id = self.object_data_list[obd][1]
@@ -1367,6 +1363,7 @@ class FmdlManagerBase:
 
             log("Obj data", bone_group_id, entry_id, vert_count, first_face_vert_id, face_vert_count)
 
+        self.section0_block_list[4][2] = export_file.tell()
         for bl4 in range(self.section0_block_list[4][1]):
             name_position = self.block4_data_list[bl4][0]
             section_8_entry_id = self.block4_data_list[bl4][1]
@@ -1380,6 +1377,7 @@ class FmdlManagerBase:
             export_file.write(pack("2H4x", unknown_short0, unknown_short1))
 
         if self.skeleton_flag:
+            self.section0_block_list[5][2] = export_file.tell()
             for bg in range(self.section0_block_list[5][1]):
                 unknown_short = self.bone_group_list[bg][0]
                 bone_entry_count = self.bone_group_list[bg][1]
@@ -1394,21 +1392,25 @@ class FmdlManagerBase:
                 padding_string = str(pad_bytes) + "x"
                 export_file.write(pack(padding_string))
 
+        self.section0_block_list[6][2] = export_file.tell()
         for te in range(self.section0_block_list[6][1]):
             name_position = self.block6_data_list[te][0]
             texture_name_position = self.block6_data_list[te][1]
             export_file.write(pack("2H", name_position, texture_name_position))
 
+        self.section0_block_list[7][2] = export_file.tell()
         for mpd in range(self.section0_block_list[7][1]):
             mat_param_type_name_position = self.mat_param_data_list[mpd][0]
             mat_param_name_position = self.mat_param_data_list[mpd][1]
             export_file.write(pack("2H", mat_param_type_name_position, mat_param_name_position))
 
+        self.section0_block_list[8][2] = export_file.tell()
         for bl8 in range(self.section0_block_list[8][1]):
             string_id = self.block8_data_list[bl8][0]
             material_type = self.block8_data_list[bl8][1]
             export_file.write(pack("2H", string_id, material_type))
 
+        self.section0_block_list[9][2] = export_file.tell()
         for bl9 in range(self.section0_block_list[9][1]):
             mesh_fe_count = self.block9_data_list[bl9][0]
             vert_fe_count = self.block9_data_list[bl9][1]
@@ -1419,6 +1421,7 @@ class FmdlManagerBase:
             # entry_bin = self.block9_data_list[bl9]
             # export_file.write(entry_bin)
 
+        self.section0_block_list[10][2] = export_file.tell()
         for obj in range(self.section0_block_list[10][1]):
             buffer_offset_id = ex_vbuffer_def_list[obj][0]
             vert_fe_count = ex_vbuffer_def_list[obj][1]
@@ -1429,23 +1432,25 @@ class FmdlManagerBase:
             export_file.write(pack("I", buffer_offset))
             log("exp vbuff defs", buffer_offset_id, vert_fe_count, buffer_length, mfd_type, buffer_offset)
 
+        self.section0_block_list[11][2] = export_file.tell()
         for blb in range(self.section0_block_list[11][1]):
             usage = self.vert_format_def_list[blb][0]
             data_type = self.vert_format_def_list[blb][1]
             format_offset = self.vert_format_def_list[blb][2]
             export_file.write(pack("2BH", usage, data_type, format_offset))
 
+        self.section0_block_list[12][2] = export_file.tell()
         for sb in range(self.section0_block_list[12][1]):
             string_type = ex_string_defs[sb][0]
             string_length = ex_string_defs[sb][1]
             string_offset = ex_string_defs[sb][2]
             export_file.write(pack("2H", string_type, string_length))
             export_file.write(pack("I", string_offset))
-
         # dynamically pad block until divisble by 16
         while (export_file.tell() % 16) != 0:
             export_file.write(pack("2x"))
 
+        self.section0_block_list[13][2] = export_file.tell()
         for bld in range(self.section0_block_list[13][1]):
             d_0 = self.block13_data_list[bld][0]
             d_1 = self.block13_data_list[bld][1]
@@ -1458,6 +1463,7 @@ class FmdlManagerBase:
             export_file.write(pack("4f", d_0, d_1, d_2, d_3))
             export_file.write(pack("4f", d_4, d_5, d_6, d_7))
 
+        self.section0_block_list[14][2] = export_file.tell()
         for bot in range(self.section0_block_list[14][1]):  # missing 4 bytes before this block
             unknown_int = ex_buffer_offset_list[bot][0]  # possible end of file flag
             buffer_size = ex_buffer_offset_list[bot][1]
@@ -1466,6 +1472,7 @@ class FmdlManagerBase:
             export_file.write(pack("3I4x", unknown_int, buffer_size, buffer_offset))
             log("ex buff offset table", unknown_int, buffer_size, buffer_offset)
 
+        self.section0_block_list[16][2] = export_file.tell()
         for lfi in range(self.section0_block_list[16][1]):
             lod_count = self.lod_list[lfi][0]
             hd_distance = self.lod_list[lfi][1]
@@ -1474,6 +1481,7 @@ class FmdlManagerBase:
             export_file.write(pack("I3f", lod_count, hd_distance, sd_distance, lo_distance))
             log("Lod data", lod_count, hd_distance, sd_distance, lo_distance)
 
+        self.section0_block_list[17][2] = export_file.tell()
         # FOR testing PURPOSES: overwriting lod values, old copy code preserved in comment below
         log("Warning, LoDs eliminated")
         for blfi in range(int(self.section0_block_list[17][1] / 8)):  # presumably 8 entries per sub mesh
@@ -1491,10 +1499,12 @@ class FmdlManagerBase:
             export_file.write(pack("2I", preceeding_face_vert_count, face_vert_count))
             log("face index table", preceeding_face_vert_count, face_vert_count)
 
+        self.section0_block_list[18][2] = export_file.tell()
         for bln in range(self.section0_block_list[18][1]):
             entry_bin = self.block18_data_list[bln]
             export_file.write(entry_bin)
 
+        self.section0_block_list[20][2] = export_file.tell()
         for bln in range(self.section0_block_list[20][1]):
             entry_bin = self.block20_data_list[bln]
             export_file.write(entry_bin)
@@ -1502,22 +1512,27 @@ class FmdlManagerBase:
         while (export_file.tell() % 16) != 0:  # round out the bytes to 16
             export_file.write(pack("2x"))
 
+        # blank section?
         export_file.write(pack("96x"))
 
-        # section 1-0
-        log("Writing 1-0 @", export_file.tell())
+        section_1_start = export_file.tell()
+
+        # section 1-0 - Material Parameters
+        ex_section1_block_list[0][1] = export_file.tell()
         export_file.write(self.block1_0_data_list[0])
         log("1-0 bin", self.block1_0_data_list[0])
-        log("1-0 len", len(self.block1_0_data_list[0]))
+        print("1-0 len", len(self.block1_0_data_list[0]))
+        ex_section1_block_list[0][2] = export_file.tell() - ex_section1_block_list[0][1]
 
-        # section 1-1
-        log("Writing 1-1 @", export_file.tell())
+        # section 1-1 - ?
+        ex_section1_block_list[1][1] = export_file.tell()
         if self.section1_block_list.get(1) is not None:  # currently no idea of what this section does
             export_file.write(self.block1_1_data_list[0])
             log("1-1 bin", self.block1_1_data_list[0])
+        ex_section1_block_list[1][2] = export_file.tell() - ex_section1_block_list[1][1]
 
-        # section 1-2 mesh data
-        log("Writing 1-2 @", export_file.tell())
+        # section 1-2 mesh data - Vertex Buffers
+        ex_section1_block_list[2][1] = export_file.tell()
         # vertexes
         for sbm in range(ex_submesh_count):
             for vert in range(len(submesh_vertex_list[sbm])):
@@ -1587,36 +1602,19 @@ class FmdlManagerBase:
                         export_file.write(pack("4B", ex_r, ex_g, ex_b, ex_a))
 
                     if current_usage == 1:  # bone weight
-                        if False:  # bpy.context.scene.vertexgroup:
-                            bw_0 = int(
-                                ex_submesh_vert_weights_list[sbm][vert][0][1] * 255)  # mesh, vertex, group, then weight
-                            bw_1 = int(ex_submesh_vert_weights_list[sbm][vert][1][
-                                           1] * 255)  # x255 to convert float value to byte
-                            bw_2 = int(ex_submesh_vert_weights_list[sbm][vert][2][1] * 255)
-                            bw_3 = int(ex_submesh_vert_weights_list[sbm][vert][3][1] * 255)
-                            export_file.write(pack("4B", bw_0, bw_1, bw_2, bw_3))
-                        else:
-                            bw_0 = int(self.internal_ex_submesh_vert_weights_list[sbm][vert][0][
-                                           1] * 255)  # mesh, vertex, group, then weight
-                            bw_1 = int(self.internal_ex_submesh_vert_weights_list[sbm][vert][1][
-                                           1] * 255)  # x255 to convert float value to byte
-                            bw_2 = int(self.internal_ex_submesh_vert_weights_list[sbm][vert][2][1] * 255)
-                            bw_3 = int(self.internal_ex_submesh_vert_weights_list[sbm][vert][3][1] * 255)
-                            export_file.write(pack("4B", bw_0, bw_1, bw_2, bw_3))
+                        # mesh, vertex, group, then weight
+                        # x255 to convert float value to byte
+                        bw_0 = int(ex_submesh_vert_weights_list[sbm][vert][0][1] * 255)
+                        bw_1 = int(ex_submesh_vert_weights_list[sbm][vert][1][1] * 255)
+                        bw_2 = int(ex_submesh_vert_weights_list[sbm][vert][2][1] * 255)
+                        bw_3 = int(ex_submesh_vert_weights_list[sbm][vert][3][1] * 255)
+                        export_file.write(pack("4B", bw_0, bw_1, bw_2, bw_3))
                     if current_usage == 7:  # bone ids
-                        if False:  # bpy.context.scene.vertexgroup:
-                            bid_0 = ex_submesh_vert_weights_list[sbm][vert][0][0]  # mesh, vertex, group, then id
-                            bid_1 = ex_submesh_vert_weights_list[sbm][vert][1][0]
-                            bid_2 = ex_submesh_vert_weights_list[sbm][vert][2][0]
-                            bid_3 = ex_submesh_vert_weights_list[sbm][vert][3][0]
-                            export_file.write(pack("4B", bid_0, bid_1, bid_2, bid_3))
-                        else:
-                            bid_0 = self.internal_ex_submesh_vert_weights_list[sbm][vert][0][
-                                0]  # mesh, vertex, group, then id
-                            bid_1 = self.internal_ex_submesh_vert_weights_list[sbm][vert][1][0]
-                            bid_2 = self.internal_ex_submesh_vert_weights_list[sbm][vert][2][0]
-                            bid_3 = self.internal_ex_submesh_vert_weights_list[sbm][vert][3][0]
-                            export_file.write(pack("4B", bid_0, bid_1, bid_2, bid_3))
+                        bid_0 = ex_submesh_vert_weights_list[sbm][vert][0][0]  # mesh, vertex, group, then id
+                        bid_1 = ex_submesh_vert_weights_list[sbm][vert][1][0]
+                        bid_2 = ex_submesh_vert_weights_list[sbm][vert][2][0]
+                        bid_3 = ex_submesh_vert_weights_list[sbm][vert][3][0]
+                        export_file.write(pack("4B", bid_0, bid_1, bid_2, bid_3))
                     if current_usage == 8:  # UV
                         coord_u = ex_submesh_uv_list[sbm][vert][0]
                         coord_v = ex_submesh_uv_list[sbm][vert][1]
@@ -1653,23 +1651,37 @@ class FmdlManagerBase:
                 export_file.write(pack("3H", f1, f2, f3))
         while (export_file.tell() % 16) != 0:  # round out the bytes to 16
             export_file.write(pack("2x"))
+        ex_section1_block_list[2][2] = export_file.tell() - ex_section1_block_list[2][1]
 
         export_file.write(pack("32x"))  # FOR testing PURPOSES: possible lod related block, zeros for filler for now
 
-        log("Writing 1-3 @", export_file.tell())
+        # Section 1-3 - Strings
+        ex_section1_block_list[3][1] = export_file.tell()
         for sa in range(self.section0_block_list[12][1]):
             pack_string = str(len(ex_string_list[sa])) + "sx"
             temp_string = ex_string_list[sa]
             export_file.write(pack(pack_string, temp_string.encode("utf-8")))
+        ex_section1_block_list[3][2] = export_file.tell() - ex_section1_block_list[3][1]
+
+        # Final step
+        # Refresh offsets
+        export_file.seek(section_0_offsets)
+        for key in self.section0_block_list:
+            print("Refreshing offset for Section 0, block:", key, self.section0_block_list[key][2] - section_0_start)
+            # id, entry count
+            export_file.write(pack("2H", self.section0_block_list[key][0], self.section0_block_list[key][1]))
+            # offset
+            export_file.write(pack("I", self.section0_block_list[key][2] - section_0_start))
+
+        export_file.seek(section_1_offsets)
+        for ent in range(len(ex_section1_block_list)):
+            print("Refreshing offset for Section 1, block:", ent, ex_section1_block_list[ent][1] - section_1_start)
+            export_file.write(pack("I", ex_section1_block_list[ent][0]))  # id
+            export_file.write(pack("I", ex_section1_block_list[ent][1] - section_1_start))  # offset
+            export_file.write(pack("I", ex_section1_block_list[ent][2]))  # length
+
         export_file.flush()
         export_file.close()
-
-    def color_vertex(self, obj_data):
-        obj_data.vertex_colors.new(name=self.model_type + '_Anim')
-        color_layer = obj_data.vertex_colors.active
-        for poly in obj_data.polygons:
-            for idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
-                color_layer.data[idx].color = (1.0, 1.0, 1.0, 1.0)
 
     def show_materials(self):
         print("Material assignment: ", self.material_assignment)

@@ -26,14 +26,14 @@ class FaceFmdlManager(FmdlManagerBase):
     def __init__(self, base_path, tempfile_path):
         super().__init__(base_path, tempfile_path)
         self.model_type = "Face"
-        self.process_normals = True
+        self.process_normals = False
 
 
 class HairFmdlManager(FmdlManagerBase):
     def __init__(self, base_path, tempfile_path):
         super().__init__(base_path, tempfile_path)
         self.model_type = "Hair"
-        self.process_normals = True
+        self.process_normals = False
 
 
 class OralFmdlManager(FmdlManagerBase):
@@ -265,7 +265,6 @@ def unpack_files():
                 exec_tool(os.path.join('Tools', 'texconv.exe'), '-y', '-ft', 'png', texture + '.dds', '-o', path)
             else:
                 print("\tFile not found.")
-                return False
     return True
 
 
