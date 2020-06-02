@@ -142,37 +142,12 @@ def get_uv_map(mesh_obj, map_name):
     return uv_list
 
 
-def get_custom_vertex_normals(mesh_obj, map_name):
+def get_custom_vertex_normals(mesh_obj):
     data = mesh_obj.data
-    cv_nrm_list = {}
-    if map_name == "":
-        data.calc_tangents()
-    else:
-        data.calc_tangents(uvmap=map_name)
-    for loop in data.loops:
-        if cv_nrm_list.get(loop.vertex_index) is None:
-            nrm_list = []
-            # sorting into dictionary because other methods produced weird bugs
-            cv_nrm_list[loop.vertex_index] = nrm_list
-            cv_nrm_list[loop.vertex_index].append(loop.normal)
-        else:
-            # slight concern order of keys may not match vertex order
-            cv_nrm_list[loop.vertex_index].append(loop.normal)
-
-    # sort into sublist
-    # I think the idea of this code was to get the average of each
-    # normal as each vertex can have more than one loop, and their normals may
-    # be misaligned; so they tried to average it at the beginning. For some
-    # reason that code was commented.
+    data.calc_normals()
     nrm_avg_list = []
-    for key in cv_nrm_list:
-        loop_list = cv_nrm_list[key]
-        avg_vec = loop_list[0]
-        for vec in range(len(loop_list)):
-            vec_instance = loop_list[vec]
-            # avg_vec = avg_vec.slerp(vec_instance,0.5)
-        nrm_avg_list.append((key, avg_vec))
-
+    for vertex in data.vertices:
+        nrm_avg_list.append((vertex.normal.x, vertex.normal.y, vertex.normal.z))
     return nrm_avg_list
 
 
@@ -186,9 +161,7 @@ def get_custom_vertex_tangents(mesh_obj, map_name):
     for loop in mesh.loops:
         if cv_tan_list.get(loop.vertex_index) is None:
             # sorting into dictionary because other methods produced weird bugs
-            tan_list = []
-            cv_tan_list[loop.vertex_index] = tan_list
-            cv_tan_list[loop.vertex_index].append(loop.tangent)
+            cv_tan_list[loop.vertex_index] = [loop.tangent]
         else:
             # slight concern order of keys may not match vertex order
             cv_tan_list[loop.vertex_index].append(loop.tangent)
@@ -200,7 +173,7 @@ def get_custom_vertex_tangents(mesh_obj, map_name):
         avg_vec = loop_list[0]
         for vec in range(len(loop_list)):
             vec_instance = loop_list[vec]
-            # avg_vec = avg_vec.slerp(vec_instance,0.5)
+            avg_vec = avg_vec.slerp(vec_instance, 0.5)
         tan_avg_list.append((key, avg_vec))
 
     return tan_avg_list
@@ -296,13 +269,17 @@ def set_vertex_weights(mesh_obj, bone_name_list, bone_id_list, bone_weight_list)
         weight_tuple = bone_weight_list[vert_inst]
 
         if weight_tuple[0] > 0.0:
-            mesh_obj.vertex_groups[id_tuple[0]].add((vert_inst,), weight_tuple[0], 'ADD')
+            if len(mesh_obj.vertex_groups) > id_tuple[0]:
+                mesh_obj.vertex_groups[id_tuple[0]].add((vert_inst,), weight_tuple[0], 'ADD')
         if weight_tuple[1] > 0.0:
-            mesh_obj.vertex_groups[id_tuple[1]].add((vert_inst,), weight_tuple[1], 'ADD')
+            if len(mesh_obj.vertex_groups) > id_tuple[1]:
+                mesh_obj.vertex_groups[id_tuple[1]].add((vert_inst,), weight_tuple[1], 'ADD')
         if weight_tuple[2] > 0.0:
-            mesh_obj.vertex_groups[id_tuple[2]].add((vert_inst,), weight_tuple[2], 'ADD')
+            if len(mesh_obj.vertex_groups) > id_tuple[2]:
+                mesh_obj.vertex_groups[id_tuple[2]].add((vert_inst,), weight_tuple[2], 'ADD')
         if weight_tuple[3] > 0.0:
-            mesh_obj.vertex_groups[id_tuple[3]].add((vert_inst,), weight_tuple[3], 'ADD')
+            if len(mesh_obj.vertex_groups) > id_tuple[3]:
+                mesh_obj.vertex_groups[id_tuple[3]].add((vert_inst,), weight_tuple[3], 'ADD')
 
 
 def collect_vertex_weights(vertex_data):
@@ -909,7 +886,6 @@ class FmdlManagerBase:
                         fl_z = unpack('f', str2)[0]
                         fl_w = unpack('f', str3)[0]
 
-                        print("Normals: ", sx, sy, sz, sw, str0, str1, str2, str3, fl_x, fl_y, fl_z, fl_w)
                         v_normals_list.append((fl_x, fl_z * -1, fl_y))  # flip from fox engine orientation
                     if current_usage == 14:  # tangents
                         tan_x, tan_y, tan_z, tan_w = unpack("4H", work_file.read(8))  # actually half floats
@@ -1085,7 +1061,7 @@ class FmdlManagerBase:
             ex_submesh_nrm_uv_list.append(uv_nrml_list)
 
             print("Custom normals?", obj.data.has_custom_normals)
-            custom_nrm_list = get_custom_vertex_normals(obj, "UVMap")
+            custom_nrm_list = get_custom_vertex_normals(obj)
             ex_custom_normals_list.append(custom_nrm_list)
 
             if "normal_map" in obj.data.uv_layers:
@@ -1552,47 +1528,23 @@ class FmdlManagerBase:
                 for ent in range(len(sub_mesh_format)):
                     current_usage = sub_mesh_format[ent]
                     if current_usage == 2:  # normals
-                        if self.process_normals:
-                            try:
-                                norm_x, norm_y, norm_z, norm_w = unpack("4H", normals_data_file.read(
-                                    8))  # actually half floats
-                                export_file.write(pack("4H", norm_x, norm_y, norm_z, norm_w))
-                            except:
-                                norm_x, norm_y, norm_z = ex_custom_normals_list[sbm][vert][1]
-                                norm_w = 1.0
-                                export_file.write(pack("4H", norm_x, norm_y, norm_z, norm_w))
-                        else:
-                            norm_x, norm_y, norm_z = ex_custom_normals_list[sbm][vert][1]
-                            norm_w = 1.0
-                            hf_x = float2halffloat(norm_x)
-                            hf_y = float2halffloat(norm_z)  # flip to fox engine orientation
-                            hf_z = float2halffloat(norm_y * -1)
-                            hf_w = float2halffloat(norm_w)
-                            export_file.write(pack("4H", hf_x, hf_y, hf_z, hf_w))
+                        norm_x, norm_y, norm_z = ex_custom_normals_list[sbm][vert]
+                        norm_w = 1.0
+                        hf_x = float2halffloat(norm_x)
+                        hf_y = float2halffloat(norm_z)  # flip to fox engine orientation
+                        hf_z = float2halffloat(norm_y * -1)
+                        hf_w = float2halffloat(norm_w)
+                        export_file.write(pack("4H", hf_x, hf_y, hf_z, hf_w))
 
                     if current_usage == 14:  # tangents
-                        if self.process_normals:
-                            try:
-                                tan_x, tan_y, tan_z, tan_w = unpack("4H", tangents_data_file.read(8))
-                                export_file.write(pack("4H", tan_x, tan_y, tan_z, tan_w))
-                            except:
-                                tan_x, tan_y, tan_z = ex_custom_tangents_list[sbm][vert][1]
-                                tan = normalize_tangents(tan_x, tan_y, tan_z)
-                                tan_w = 1.0
-                                hf_x = float2halffloat(tan[0])
-                                hf_y = float2halffloat(tan[1] * -1)  # flip to fox engine orientation
-                                hf_z = float2halffloat(tan[2] * -1)
-                                hf_w = float2halffloat(tan_w)
-                                export_file.write(pack("4H", hf_x, hf_z, hf_y, hf_w))
-                        else:
-                            tan_x, tan_y, tan_z = ex_custom_tangents_list[sbm][vert][1]
-                            tan = normalize_tangents(tan_x, tan_y, tan_z)
-                            tan_w = 1.0
-                            hf_x = float2halffloat(tan[0])
-                            hf_y = float2halffloat(tan[1] * -1)  # flip to fox engine orientation
-                            hf_z = float2halffloat(tan[2] * -1)
-                            hf_w = float2halffloat(tan_w)
-                            export_file.write(pack("4H", hf_x, hf_z, hf_y, hf_w))
+                        tan_x, tan_y, tan_z = ex_custom_tangents_list[sbm][vert][1]
+                        tan = normalize_tangents(tan_x, tan_y, tan_z)
+                        tan_w = 1.0
+                        hf_x = float2halffloat(tan[0])
+                        hf_y = float2halffloat(tan[1] * -1)  # flip to fox engine orientation
+                        hf_z = float2halffloat(tan[2] * -1)
+                        hf_w = float2halffloat(tan_w)
+                        export_file.write(pack("4H", hf_x, hf_z, hf_y, hf_w))
 
                     if current_usage == 3:  # color
                         ex_r = int(ex_submesh_vert_color_list[sbm][vert][0] * 255)
