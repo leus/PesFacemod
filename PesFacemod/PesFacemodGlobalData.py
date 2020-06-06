@@ -34,10 +34,14 @@ class PesFacemodGlobalData:
         return os.path.join(cls.base_path, str(cls.player_id), 'sourceimages', '#windx11', *file)
 
     @classmethod
+    def player_path(cls):
+        return os.path.join(cls.base_path, str(cls.player_id))
+
+    @classmethod
     def load(cls, path):
         cls.facepath = path
         m = cls.p.match(path)
-        if m and os.path.isfile(cls.facepath):
+        if m:
             # (path, filename) = os.path.split(cls.facepath)
             # obtain all relevants path parts and files for the model
             # XXXXX\#Win\face.fpk

@@ -1,5 +1,5 @@
 import bpy, os, os.path, struct
-from bpy.props import StringProperty, BoolProperty, FloatProperty
+from bpy.props import StringProperty, BoolProperty, FloatProperty, IntProperty
 from struct import *
 import tempfile
 from mathutils import Vector
@@ -26,14 +26,12 @@ class FaceFmdlManager(FmdlManagerBase):
     def __init__(self, base_path, tempfile_path):
         super().__init__(base_path, tempfile_path)
         self.model_type = "Face"
-        self.process_normals = False
 
 
 class HairFmdlManager(FmdlManagerBase):
     def __init__(self, base_path, tempfile_path):
         super().__init__(base_path, tempfile_path)
         self.model_type = "Hair"
-        self.process_normals = False
 
 
 class OralFmdlManager(FmdlManagerBase):
@@ -87,11 +85,11 @@ class PANEL_PT_file_properties(bpy.types.Panel):
     default_face = os.path.normpath(default_filename)
     bpy.types.Scene.face_path = StringProperty(name="FACE File", subtype='FILE_PATH', default=default_face)
     bpy.types.Scene.eyes_size = FloatProperty(name="", min=0.5, max=1.5, default=1.03)
+    bpy.types.Scene.player_id = IntProperty(name="Player Id")
 
     def draw(self, context):
         layout = self.layout
         pcoll = preview_collections["main"]
-
         my_icon = pcoll["fhm_icon"]
 
         scn = bpy.context.scene
@@ -110,7 +108,6 @@ class PANEL_PT_file_properties(bpy.types.Panel):
 
         row.operator("primary.operator", text="Import Fpk", icon="IMPORT").face_opname = "import_files"
         row.operator("primary.operator", text="Export Fpk", icon="EXPORT").face_opname = "export_files"
-        row = box.row(align=0)
 
         box = layout.box()
         row = box.row(align=1)
@@ -119,6 +116,11 @@ class PANEL_PT_file_properties(bpy.types.Panel):
         if not PesFacemodGlobalData.good_path(scn.face_path):
             row.enabled = 0
         row.operator("primary.operator", text="New scene", icon="FILE_BLANK").face_opname = "newscene"
+
+        row = box.row()
+        row.label(text="New Id")
+        box.prop(scn, "player_id", text="")
+        row.operator("primary.operator", text="Renumber player", icon="FILE_REFRESH").face_opname = "renumber"
 
 
 def get_diameter(obj, dim):
@@ -366,24 +368,7 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             return {'FINISHED'}
 
         if self.face_opname == "export_files":
-            if len(pes_face) == 0:
-                return {'FINISHED'}
-            face_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.face_fmdl)))
-            self.report({"INFO"}, "Face Exported Succesfully")
-
-            hair_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.hair_fmdl)))
-            self.report({"INFO"}, "Hair Exported Succesfully")
-
-            if len(pes_oral) != 0 and oral_type is not None:
-                oral_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
-            self.report({"INFO"}, "Oral Exported Succesfully")
-
-            pes_diff_bin_exp(PesFacemodGlobalData.diff_bin, PesFacemodGlobalData.oral_fmdl)
-            self.report({"INFO"}, "Exporting PES_DIFF.BIN Succesfully!")
-
-            pack_files()
-            self.report({"INFO"}, "Files packed")
-
+            self.export_files()
             return {'FINISHED'}
 
         if self.face_opname == "newscene":
@@ -394,6 +379,55 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             bpy.ops.wm.read_homefile()
             PesFacemodGlobalData.clear()
             return {'FINISHED'}
+
+        if self.face_opname == "renumber":
+            self.renumber_player(scn.player_id)
+            return {'FINISHED'}
+
+    def export_files(self):
+        if len(pes_face) == 0:
+            return {'FINISHED'}
+        face_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.face_fmdl)))
+        self.report({"INFO"}, "Face Exported Succesfully")
+
+        hair_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.hair_fmdl)))
+        self.report({"INFO"}, "Hair Exported Succesfully")
+
+        if len(pes_oral) != 0 and oral_type is not None:
+            oral_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
+        self.report({"INFO"}, "Oral Exported Succesfully")
+
+        pes_diff_bin_exp(PesFacemodGlobalData.diff_bin, PesFacemodGlobalData.oral_fmdl)
+        self.report({"INFO"}, "Exporting PES_DIFF.BIN Succesfully!")
+
+        pack_files()
+        self.report({"INFO"}, "Files packed")
+
+    def renumber_player(self, player_id):
+        import re
+        p = re.compile(r'/Assets/pes16/model/character/face/real/(?P<id>\d+)/sourceimages/', re.IGNORECASE)
+
+        existing_player_path = PesFacemodGlobalData.player_path()
+        new_path = re.sub(r'\\face\\real\\[0-9]+\\', f'\\\\face\\\\real\\\\{player_id}\\\\',
+                          bpy.data.scenes[0].face_path)
+        PesFacemodGlobalData.load(new_path)
+
+        # Path shouldn't exist
+        if os.path.exists(PesFacemodGlobalData.player_path()):
+            self.report({"ERROR_INVALID_INPUT"},
+                        "Cannot renumber to an existing folder - make sure it's out of the way")
+            PesFacemodGlobalData.load(bpy.data.scenes[0].face_path)
+        else:
+            import shutil
+            PesFacemodGlobalData.load(new_path)
+            shutil.copytree(existing_player_path, PesFacemodGlobalData.player_path())
+            print("Renumbering player id to ", player_id, PesFacemodGlobalData.face_fpk)
+            bpy.data.scenes[0].face_path = PesFacemodGlobalData.face_fpk
+            for obj in bpy.data.objects:
+                for item in obj.fmdl_strings:
+                    item.name = p.sub(f"/Assets/pes16/model/character/face/real/{player_id}/sourceimages/", item.name)
+
+            self.export_files()
 
 
 class ListItem(bpy.types.PropertyGroup):

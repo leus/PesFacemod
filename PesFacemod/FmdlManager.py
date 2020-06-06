@@ -428,7 +428,6 @@ class FmdlManagerBase:
 
     def __init__(self, base_path, tempfile_path):
         self.model_type = None
-        self.process_normals = False
         self.temp_path = ""
         self.img_search_path = ""
         self.export_offset = 0
@@ -860,19 +859,12 @@ class FmdlManagerBase:
             vertex_list_offset = work_file.tell()
 
             work_file.seek(uv_list_offset)
-            if self.process_normals:
-                normals_data_file = open(os.path.join(self.temp_path, self.model_type.lower() + "_normals_data.bin"),
-                                         "ab")
-                tangents_data_file = open(os.path.join(self.temp_path, self.model_type.lower() + "_tangents_data.bin"),
-                                          "ab")
             for uvc in range(sub_mesh_verts):
                 for ent in range(len(sub_mesh_format)):
                     current_usage = sub_mesh_format[ent]
                     # the order in which these are evaluated is very important
                     if current_usage == 2:  # normals
                         norm_x, norm_y, norm_z, norm_w = unpack("4H", work_file.read(8))  # actually half floats
-                        if self.process_normals:
-                            normals_data_file.write(pack("4H", norm_x, norm_y, norm_z, norm_w))
                         sx = halffloat2float(norm_x)
                         sy = halffloat2float(norm_y)
                         sz = halffloat2float(norm_z)
@@ -889,8 +881,6 @@ class FmdlManagerBase:
                         v_normals_list.append((fl_x, fl_z * -1, fl_y))  # flip from fox engine orientation
                     if current_usage == 14:  # tangents
                         tan_x, tan_y, tan_z, tan_w = unpack("4H", work_file.read(8))  # actually half floats
-                        if self.process_normals:
-                            tangents_data_file.write(pack("4H", tan_x, tan_y, tan_z, tan_w))
                     if current_usage == 3:  # color
                         r, g, b, a = unpack("4B", work_file.read(4))
                         vertex_color_list.append((r / 255, g / 255, b / 255, a / 255))
@@ -918,9 +908,6 @@ class FmdlManagerBase:
                         fnu = unpack('f', str2)[0]
                         fnv = unpack('f', str3)[0]
                         uvlist_normal.append((fnu, (fnv * -1) + 1))
-            if self.process_normals:
-                normals_data_file.flush(), normals_data_file.close()
-                tangents_data_file.flush(), tangents_data_file.close()
             while (work_file.tell() % 16) != 0:
                 work_file.seek(4, 1)
             uv_list_offset = work_file.tell()
@@ -1518,10 +1505,6 @@ class FmdlManagerBase:
                 export_file.write(pack("2x"))
 
         # UV, normals, weighting, bone ids, etc
-        if self.process_normals:
-            normals_data_file = open(os.path.join(self.temp_path, self.model_type.lower() + "_normals_data.bin"), "rb")
-            tangents_data_file = open(os.path.join(self.temp_path, self.model_type.lower() + "_tangents_data.bin"),
-                                      "rb")
         for sbm in range(ex_submesh_count):
             sub_mesh_format = self.vformat_per_submesh_list[sbm]
             for vert in range(len(submesh_vertex_list[sbm])):
