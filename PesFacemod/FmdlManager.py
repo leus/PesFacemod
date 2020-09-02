@@ -173,7 +173,7 @@ def get_custom_vertex_tangents(mesh_obj, map_name):
         avg_vec = loop_list[0]
         for vec in range(len(loop_list)):
             vec_instance = loop_list[vec]
-            avg_vec = avg_vec.slerp(vec_instance, 0.5)
+            # avg_vec = avg_vec.slerp(vec_instance, 0.5)
         tan_avg_list.append((key, avg_vec))
 
     return tan_avg_list
@@ -316,6 +316,7 @@ def add_image_texture_to_material(node_type, texture_path, material):
             material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Base Color'])
             material.node_tree.links.new(texture.outputs['Alpha'], principled.inputs['Alpha'])
         elif node_type == 'Base_Tex_SRGB':
+            teximage.alpha_mode = 'NONE'
             material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Base Color'])
         elif node_type == 'NormalMap_Tex_NRM':
             material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Normal'])
@@ -324,11 +325,17 @@ def add_image_texture_to_material(node_type, texture_path, material):
         elif node_type == 'Translucent_Tex_LIN':
             material.node_tree.links.new(texture.outputs['Color'], principled.inputs['Subsurface'])
     else:
-        print("I don't know how to handle '%s', ignoring texture", node_type)
+        print(f"I don't know how to handle '{node_type}', ignoring texture")
 
 
 def add_image_to_material(method, filename, material):
     png_file = PesFacemodGlobalData.tex_path(filename + '.PNG')
+    if not os.path.exists(png_file):
+        print(f"\t\t{png_file} does not exists, trying common texture...")
+        head, tail = os.path.split(png_file)
+        png_file = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..',
+                                                'Tools', 'common', tail))
+
     if os.path.exists(png_file):
         print("\t\tAdding texture to material '%s'" % png_file)
         add_image_texture_to_material(method, png_file, material)
@@ -345,7 +352,7 @@ def apply_textures():
     add_image_to_material("SpecularMap_Tex_LIN", "face_srm", face_mat)
     add_image_to_material("NormalMap_Tex_NRM", "face_nrm", face_mat)
     add_image_to_material("Translucent_Tex_LIN", "face_trm", face_mat)
-    for obj in ['Face_0', 'Face_2', 'Hair_0']:
+    for obj in ['Face_0', 'Face_1', 'Face_2', 'Face_3', 'Face_4', 'Face_5', 'Face_6']:
         bpy.data.objects[obj].data.materials.append(face_mat)
 
     hair_mat = get_material("hair_material")
@@ -353,7 +360,7 @@ def apply_textures():
     add_image_to_material("SpecularMap_Tex_LIN", "hair_parts_srm", hair_mat)
     add_image_to_material("NormalMap_Tex_NRM", "hair_parts_nrm", hair_mat)
     add_image_to_material("Translucent_Tex_LIN", "hair_parts_trm", hair_mat)
-    for obj in ['Hair_1']:
+    for obj in ['Hair_0', 'Hair_1', 'Hair_2']:
         bpy.data.objects[obj].data.materials.append(hair_mat)
 
 
@@ -593,7 +600,6 @@ class FmdlManagerBase:
             self.block4_data_list.append(
                 (name_position, material_index, texture_count, parameter_count, first_texture_index,
                  first_parameter_index))
-            self.material_assignment[material_index].name_index = name_position
 
         print("Block4 data (material instance)", self.block4_data_list)
 
@@ -602,7 +608,6 @@ class FmdlManagerBase:
             work_file.seek(self.section0_offset + self.section0_block_list[5][2], 0)
             log("\n0x05   Bone group table@", work_file.tell())
             for ob in range(self.section0_block_list[5][1]):
-
                 unknown_int, bone_entry_count = unpack("2H", work_file.read(4))
                 bone_entry_list = []
                 for bec in range(bone_entry_count):
@@ -1623,13 +1628,30 @@ class FmdlManagerBase:
         print("Textures: ", self.textures)
 
         print("\tFound %d textures" % (len(self.textures)))
-        print("\t\tblock 6: ", self.block6_data_list)
-        print("\t\tblock 7: ", self.mat_param_data_list)
+        print("\t\tblock 6: ")
+        for texture_definition in self.block6_data_list:
+            print(f"\t{self.string_list[texture_definition[0]]} - {self.string_list[texture_definition[1]]}")
+        print("\t\tblock 7: ")
+        for texture_param in self.mat_param_data_list:
+            print(f"\t\t\t{self.string_list[texture_param[0]]} {texture_param[1]}")
+        print("\t\tblock 8: ")
+        for tup in self.block8_data_list:
+            print(f"{tup[0]}, {tup[1]}: {self.string_list[tup[0]]}, {self.string_list[tup[1]]}")
+
+        # Material instance definition
+        i = 0
         for tup in self.block4_data_list:
             (name_index, mat_index, texture_count, param_count, first_texture_index, first_param_index) = tup
-            material_name = self.string_list[name_index]
-            print("\t%d - Texture: %s" % (name_index, material_name))
+            # add material names to material assignment
+            for mat_assign in self.material_assignment:
+                if mat_assign.material_index == mat_index:
+                    mat_assign.name_index = name_index
 
+            material_name = self.string_list[name_index]
+
+            print(f"\t{i}: {mat_index} - Texture: {material_name}")
+            i = i + 1
+            material = get_material(material_name)
             texture_assignments = self.mat_param_data_list
             for texture_index in range(first_texture_index, first_texture_index + texture_count):
                 if texture_index >= len(texture_assignments):
@@ -1647,10 +1669,13 @@ class FmdlManagerBase:
                         print("\t\tTexture applied to material '%s'" % png_file)
                     else:
                         print("\t\t--> file not found: '%s'", png_file)
+                    f, ext = os.path.splitext(texture_file_name)
+                    add_image_to_material(type_name, f, material)
 
         print("Default material assignments:")
-        i = 0
-        for mesh in self.internal_mesh_list:
-            material_name = self.string_list[self.material_assignment[i].name_index]
-            print("\tTexture '%s' assigned to mesh %d" % (material_name, i))
-            i = i + 1
+        for mat_assign in self.material_assignment:
+            material_name = self.string_list[mat_assign.name_index]
+            obj = self.internal_mesh_list[mat_assign.mesh_index]
+            print(f"\tTexture '{material_name}' ({mat_assign.name_index}) assigned to object '{obj.name}'")
+            material = get_material(material_name)
+            obj.data.materials.append(material)

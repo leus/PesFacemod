@@ -261,10 +261,14 @@ def unpack_files():
         for texture in textures:
             print("\tTrying to unpack ", texture + '.ftex', "...")
             if os.path.exists(texture + '.ftex'):
-                exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), texture + '.ftex')
-                # extract PNG from DDS
-                (path, fname) = os.path.split(texture + '.dds')
-                exec_tool(os.path.join('Tools', 'texconv.exe'), '-y', '-ft', 'png', texture + '.dds', '-o', path)
+                if exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), texture + '.ftex'):
+                    # extract PNG from DDS
+                    (path, fname) = os.path.split(texture + '.dds')
+                    if not exec_tool(os.path.join('Tools', 'texconv.exe'), '-y', '-ft', 'png', texture + '.dds', '-o',
+                                     path):
+                        print("Error converting texture")
+                else:
+                    print("Error unpacking")
             else:
                 print("\tFile not found.")
     return True
@@ -353,8 +357,9 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             pes_hair = hair_type.importmodel(str(os.path.abspath(PesFacemodGlobalData.hair_fmdl)))
             self.report({"INFO"}, "hair.fmdl file imported")
 
-            if False:  # oral.fmdl not processed yet (vertex weights are giving me trouble)
-                print("Trying to open file ", str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
+            oral_model_file = str(os.path.abspath(PesFacemodGlobalData.oral_fmdl))
+            print("Trying to open file ", oral_model_file)
+            if os.path.exists(oral_model_file):
                 oral_type = OralFmdlManager(PesFacemodGlobalData.facepath, temp_path)
                 pes_oral = oral_type.importmodel(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
                 self.report({"INFO"}, "Oral.fmdl file imported")
@@ -363,7 +368,7 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
             self.report({"INFO"}, "PES_DIFF.BIN Imported Succesfully!")
             print("Files imported")
 
-            apply_textures()
+            # apply_textures()
 
             return {'FINISHED'}
 
@@ -393,7 +398,7 @@ class OBJECT_OT_face_hair_modifier(bpy.types.Operator):
         hair_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.hair_fmdl)))
         self.report({"INFO"}, "Hair Exported Succesfully")
 
-        if len(pes_oral) != 0 and oral_type is not None:
+        if len(pes_oral) != 0 and oral_type is not None and bpy.data.objects['Oral_0'] is not None:
             oral_type.exportmodel(str(os.path.abspath(PesFacemodGlobalData.oral_fmdl)))
         self.report({"INFO"}, "Oral Exported Succesfully")
 
