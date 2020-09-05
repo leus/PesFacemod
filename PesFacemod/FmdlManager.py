@@ -143,10 +143,8 @@ def get_uv_map(mesh_obj, map_name):
 
 
 def get_custom_vertex_normals(mesh_obj):
-    data = mesh_obj.data
-    data.calc_normals()
     nrm_avg_list = []
-    for vertex in data.vertices:
+    for vertex in mesh_obj.data.vertices:
         nrm_avg_list.append((vertex.normal.x, vertex.normal.y, vertex.normal.z))
     return nrm_avg_list
 
@@ -492,18 +490,33 @@ class FmdlManagerBase:
         print("Opening fmdl file: ", work_filepath)
         sub_mesh_list = []
         work_file = open(work_filepath, 'rb')
-        work_file.seek(16, 0)
+        buf = unpack("4c", work_file.read(4))
+        # if buf != "FMDL":
+        print(f"Warning: wrong header - expected 'FMDL', got '{buf}'")
+        [fl] = unpack("f", work_file.read(4))
+        print(f"File version: {fl:.2f}")
+
+        # 0x10 - 0x17 (uint64): Section 0 blocks' binary flags.
+        work_file.seek(0x10, 0)
         self.byte_16 = unpack("B", work_file.read(1))[0]
-        work_file.seek(7, 1)
+        # 0x18 - 0x1F (uint64): Section 1 blocks' binary flags.
+        work_file.seek(0x18, 0)
         self.byte_32 = unpack("B", work_file.read(1))[0]
-        work_file.seek(7, 1)
 
+        # 0x20 - 0x23 (uint32): Number of blocks in section 0.
+        # 0x24 - 0x27 (uint32): Number of blocks in section 1.
+        work_file.seek(0x20, 0)
         self.section0_header_count, self.section1_header_count = unpack("2I", work_file.read(8))
+        # 0x28 - 0x2B (uint32): Section 0 offset.
+        # 0x2C - 0x2F (uint32): Section 0 length.
         self.section0_offset, self.Section0_length = unpack("2I", work_file.read(8))
+        # 0x30 - 0x33 (uint32): Section 1 offset.
+        # 0x34 - 0x37 (uint32): Section 1 length.
         self.section1_offset, self.section1_length = unpack("2I", work_file.read(8))
+        # 0x38 - 0x3F: Padding.
 
-        work_file.seek(8, 1)
-
+        # Section 0x0 Blocks
+        work_file.seek(0x40, 0)
         for data_block0 in range(self.section0_header_count):
             block_id = unpack("H", work_file.read(2))[0]
             entry_count = unpack("H", work_file.read(2))[0]
@@ -882,7 +895,6 @@ class FmdlManagerBase:
                         fl_y = unpack('f', str1)[0]
                         fl_z = unpack('f', str2)[0]
                         fl_w = unpack('f', str3)[0]
-
                         v_normals_list.append((fl_x, fl_z * -1, fl_y))  # flip from fox engine orientation
                     if current_usage == 14:  # tangents
                         tan_x, tan_y, tan_z, tan_w = unpack("4H", work_file.read(8))  # actually half floats
@@ -929,18 +941,21 @@ class FmdlManagerBase:
             submesh_name = self.model_type + "_" + str(subm)
             print("Creating object ", submesh_name)
             submesh_object = allocate_object(submesh_name, vertexlist, facelist)
-            print(self.internal_mesh_list)
             self.internal_mesh_list.append(submesh_object)
             allocate_maps(submesh_object, facelist, uvlist, uvlist_normal)
 
             # attempt to apply custom vertex normals???
             sub_mesh_data = submesh_object.data
-            # sub_mesh_data.normals_split_custom_set(v_normals_list) #doesn't work
-            if self.auto_smooth:
-                for f in sub_mesh_data.polygons:
-                    f.use_smooth = True
-                sub_mesh_data.normals_split_custom_set_from_vertices(v_normals_list)
-                sub_mesh_data.use_auto_smooth = True
+            sub_mesh_data.calc_normals_split()
+            if submesh_name in ['Face_0', 'Face_2', 'Hair_0']:
+                print(f"Assigning vertex normals for {submesh_name}: {v_normals_list}")
+
+            # Smooth shading for all polys
+            sub_mesh_data.use_auto_smooth = True
+            for f in sub_mesh_data.polygons:
+                f.use_smooth = True
+            sub_mesh_data.normals_split_custom_set_from_vertices(v_normals_list)
+
             # apply vertex colors
             if len(vertex_color_list) != 0:
                 set_vertex_colors(self.model_type + '_Anim', submesh_object.data, vertex_color_list)
@@ -1052,8 +1067,10 @@ class FmdlManagerBase:
                 uv_nrml_list = get_uv_map(obj, "UVMap")
             ex_submesh_nrm_uv_list.append(uv_nrml_list)
 
-            print("Custom normals?", obj.data.has_custom_normals)
             custom_nrm_list = get_custom_vertex_normals(obj)
+            if obj.name in ['Face_0', 'Face_2', 'Hair_0']:
+                print(f"Exporting normals for {obj.name}: {custom_nrm_list}")
+
             ex_custom_normals_list.append(custom_nrm_list)
 
             if "normal_map" in obj.data.uv_layers:
