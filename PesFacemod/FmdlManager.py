@@ -143,9 +143,10 @@ def get_uv_map(mesh_obj, map_name):
 
 
 def get_custom_vertex_normals(mesh_obj):
-    nrm_avg_list = []
-    for vertex in mesh_obj.data.vertices:
-        nrm_avg_list.append((vertex.normal.x, vertex.normal.y, vertex.normal.z))
+    mesh_obj.data.calc_normals_split()
+    nrm_avg_list = [None] * len(mesh_obj.data.vertices)
+    for loop in mesh_obj.data.loops:
+        nrm_avg_list[loop.vertex_index] = (loop.normal.x, loop.normal.y, loop.normal.z)
     return nrm_avg_list
 
 
