@@ -131,9 +131,9 @@ def get_diameter(obj, dim):
 
 # Dimensions extracted from the base eye model we are using. I assume it's from the game.
 def get_pes_diameters(obj):
-    d_x = get_diameter(obj, 0) / 0.022276999428868294
-    d_y = get_diameter(obj, 1) / 0.022332072257995605
-    d_z = get_diameter(obj, 2) / 0.015468999743461609
+    d_x = get_diameter(obj, 0) / 0.025
+    d_y = get_diameter(obj, 1) / 0.025
+    d_z = get_diameter(obj, 2) / 0.025
     return d_x, d_y, d_z
 
 
@@ -143,7 +143,7 @@ def scene_eye_size(pes_factor):
 
 def save_eye(stream_handle, name, diameter_offset, position_offset):
     if name in bpy.data.objects.keys():
-        loc = bpy.data.objects[name].location.copy()
+        loc = bpy.data.objects[name].location.copy() @ bpy.data.objects[name].matrix_world
         d_x, d_y, d_z = get_pes_diameters(bpy.data.objects[name])
 
         loc.x = -loc.x
