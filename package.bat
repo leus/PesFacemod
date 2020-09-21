@@ -11,7 +11,7 @@ copy ..\__init__.py PesFacemod\
 copy ..\icon.png PesFacemod\
 del PesFacemod.zip
 zip -r PesFacemod.zip PesFacemod\*
-del /q "%appdata%\Blender Foundation\Blender\2.82\scripts\addons\__pycache__\*"
-unzip -o PesFacemod.zip -d "%appdata%\Blender Foundation\Blender\2.82\scripts\addons"
-"D:\Program Files\Blender Foundation\Blender 2.82\blender.exe"
+del /q "%appdata%\Blender Foundation\Blender\2.90\scripts\addons\__pycache__\*"
+unzip -o PesFacemod.zip -d "%appdata%\Blender Foundation\Blender\2.90\scripts\addons"
+"C:\Program Files\Blender Foundation\Blender 2.90\blender.exe"
 cd ..
