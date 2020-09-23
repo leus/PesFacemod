@@ -127,7 +127,7 @@ def get_face_tuples(mesh_obj):
         #    if len(vector) != 3:
         #        raise Exception("Mesh not triangulated")
         if len(poly.vertices) != 3:
-            raise Exception("Mesh not triangulated")
+            raise Exception(f"Mesh not triangulated: {mesh_obj.name_full} - polygon {poly.index} has {len(poly.vertices)} vertices")
         t_face_list.append([poly.vertices[0], poly.vertices[1], poly.vertices[2]])
     return t_face_list
 
@@ -147,6 +147,11 @@ def get_custom_vertex_normals(mesh_obj):
     nrm_avg_list = [None] * len(mesh_obj.data.vertices)
     for loop in mesh_obj.data.loops:
         nrm_avg_list[loop.vertex_index] = (loop.normal.x, loop.normal.y, loop.normal.z)
+    output = [idx for idx, element in enumerate(nrm_avg_list) if element is None]
+    if len(output) > 0:
+        print(f"None value found: {output}")
+        for idx in output:
+            nrm_avg_list[idx] = (0, 0, 0)
     return nrm_avg_list
 
 
@@ -1069,10 +1074,8 @@ class FmdlManagerBase:
             ex_submesh_nrm_uv_list.append(uv_nrml_list)
 
             custom_nrm_list = get_custom_vertex_normals(obj)
-            if obj.name in ['Face_0', 'Face_2', 'Hair_0']:
-                print(f"Exporting normals for {obj.name}: {custom_nrm_list}")
-
             ex_custom_normals_list.append(custom_nrm_list)
+            print(f"Adding normals info for {obj.name} - {len(custom_nrm_list)} vertices")
 
             if "normal_map" in obj.data.uv_layers:
                 custom_tan_list = get_custom_vertex_tangents(obj, "normal_map")
@@ -1097,6 +1100,8 @@ class FmdlManagerBase:
 
         # Precalculation segment
         #
+
+        print(f"Normals present for {len(ex_custom_normals_list)} submeshes")
 
         # 0x0A  precalc vertex buffer def list
         vbuff_def_sub_mesh = -1
@@ -1534,13 +1539,17 @@ class FmdlManagerBase:
                 for ent in range(len(sub_mesh_format)):
                     current_usage = sub_mesh_format[ent]
                     if current_usage == 2:  # normals
-                        norm_x, norm_y, norm_z = ex_custom_normals_list[sbm][vert]
-                        norm_w = 1.0
-                        hf_x = float2halffloat(norm_x)
-                        hf_y = float2halffloat(norm_z)  # flip to fox engine orientation
-                        hf_z = float2halffloat(norm_y * -1)
-                        hf_w = float2halffloat(norm_w)
-                        export_file.write(pack("4H", hf_x, hf_y, hf_z, hf_w))
+                        try:
+                            norm_x, norm_y, norm_z = ex_custom_normals_list[sbm][vert]
+                            norm_w = 1.0
+                            hf_x = float2halffloat(norm_x)
+                            hf_y = float2halffloat(norm_z)  # flip to fox engine orientation
+                            hf_z = float2halffloat(norm_y * -1)
+                            hf_w = float2halffloat(norm_w)
+                            export_file.write(pack("4H", hf_x, hf_y, hf_z, hf_w))
+                        except:
+                            print(f"Error obtaining normals for submesh {sbm}, vertex {vert} ({ex_custom_normals_list[sbm][vert]}")
+                            raise
 
                     if current_usage == 14:  # tangents
                         tan_x, tan_y, tan_z = ex_custom_tangents_list[sbm][vert][1]
