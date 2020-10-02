@@ -58,14 +58,14 @@ def exec_tool(*args):
 def ftex_to_tga(ftexfilepath):
     exec_tool(os.path.join('Tools', 'FtexDdsTools.exe'), ftexfilepath)
     (fname, ext) = os.path.splitext(ftexfilepath)
-    exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvdecompress.exe'), fname + '.dds',
+    exec_tool(os.path.join('Tools', 'nvidia-texture-tools', 'bin64', 'nvdecompress.exe'), fname + '.dds',
               '-format', 'tga')
     return fname + '.tga'
 
 
 def tga_to_dds(tgafilepath):
     (fname, ext) = os.path.splitext(tgafilepath)
-    exec_tool(os.path.join('Tools', 'nvidia-texture-tools-2.1.1-win64', 'bin64', 'nvcompress.exe'), '-bc3',
+    exec_tool(os.path.join('Tools', 'nvidia-texture-tools', 'bin64', 'nvcompress.exe'), '-bc3',
               fname + '.tga', fname + '.dds')
     exec_tool(os.path.join('Tools', 'DdsFtexTools.exe'), fname + '.dds')
     return fname + '.dds'
