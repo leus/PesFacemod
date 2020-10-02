@@ -953,8 +953,6 @@ class FmdlManagerBase:
             # attempt to apply custom vertex normals???
             sub_mesh_data = submesh_object.data
             sub_mesh_data.calc_normals_split()
-            if submesh_name in ['Face_0', 'Face_2', 'Hair_0']:
-                print(f"Assigning vertex normals for {submesh_name}: {v_normals_list}")
 
             # Smooth shading for all polys
             sub_mesh_data.use_auto_smooth = True
